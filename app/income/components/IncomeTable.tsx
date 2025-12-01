@@ -119,7 +119,7 @@ function MobileTotals({ entries }: { entries: IncomeEntry[] }) {
   );
 }
 
-export function IncomeTable({
+export const IncomeTable = React.memo(function IncomeTable({
   entries,
   clients,
   onRowClick,
@@ -247,4 +247,4 @@ export function IncomeTable({
       </div>
     </>
   );
-}
+});

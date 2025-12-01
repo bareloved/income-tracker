@@ -1,6 +1,7 @@
 import { db } from "@/db/client";
 import { incomeEntries, type IncomeEntry, type NewIncomeEntry } from "@/db/schema";
 import { eq, and, gte, lte, asc, desc, sql, count, sum, lt } from "drizzle-orm";
+import { unstable_cache } from "next/cache";
 import { Currency } from "./currency";
 import { DEFAULT_VAT_RATE } from "./types";
 // Note: googleCalendar is imported lazily in importIncomeEntriesFromCalendarForMonth
@@ -95,210 +96,214 @@ export type MonthPaymentStatus = "all-paid" | "has-unpaid" | "empty";
  * Returns a map of month (1-12) -> status
  * Only considers PAST jobs (future gigs don't count for payment status)
  */
-export async function getMonthPaymentStatuses(year: number): Promise<Record<number, MonthPaymentStatus>> {
-  const startOfYear = `${year}-01-01`;
-  const endOfYear = `${year}-12-31`;
-  const today = getTodayString();
-  
-  // Get counts of past entries and unpaid past entries per month
-  // We only consider jobs where the date has passed (work was done)
-  const results = await db
-    .select({
-      month: sql<number>`EXTRACT(MONTH FROM ${incomeEntries.date})::int`,
-      // Only count past jobs (where date < today)
-      pastJobsCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.date} < ${today})`,
-      // Count unpaid past jobs
-      unpaidCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.paymentStatus} != 'paid' AND ${incomeEntries.date} < ${today})`,
-    })
-    .from(incomeEntries)
-    .where(
-      and(
-        gte(incomeEntries.date, startOfYear),
-        lte(incomeEntries.date, endOfYear)
+export const getMonthPaymentStatuses = unstable_cache(
+  async (year: number): Promise<Record<number, MonthPaymentStatus>> => {
+    const startOfYear = `${year}-01-01`;
+    const endOfYear = `${year}-12-31`;
+    const today = getTodayString();
+    
+    // Get counts of past entries and unpaid past entries per month
+    // We only consider jobs where the date has passed (work was done)
+    const results = await db
+      .select({
+        month: sql<number>`EXTRACT(MONTH FROM ${incomeEntries.date})::int`,
+        // Only count past jobs (where date < today)
+        pastJobsCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.date} < ${today})`,
+        // Count unpaid past jobs
+        unpaidCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.paymentStatus} != 'paid' AND ${incomeEntries.date} < ${today})`,
+      })
+      .from(incomeEntries)
+      .where(
+        and(
+          gte(incomeEntries.date, startOfYear),
+          lte(incomeEntries.date, endOfYear)
+        )
       )
-    )
-    .groupBy(sql`EXTRACT(MONTH FROM ${incomeEntries.date})`);
-  
-  // Build the status map
-  const statusMap: Record<number, MonthPaymentStatus> = {};
-  
-  // Initialize all months as empty
-  for (let m = 1; m <= 12; m++) {
-    statusMap[m] = "empty";
-  }
-  
-  // Update based on query results
-  for (const row of results) {
-    const month = row.month;
-    // Only show status if there are past jobs in this month
-    if (row.pastJobsCount === 0) {
-      statusMap[month] = "empty";
-    } else if (row.unpaidCount > 0) {
-      statusMap[month] = "has-unpaid";
-    } else {
-      statusMap[month] = "all-paid";
+      .groupBy(sql`EXTRACT(MONTH FROM ${incomeEntries.date})`);
+    
+    // Build the status map
+    const statusMap: Record<number, MonthPaymentStatus> = {};
+    
+    // Initialize all months as empty
+    for (let m = 1; m <= 12; m++) {
+      statusMap[m] = "empty";
     }
-  }
-  
-  return statusMap;
-}
+    
+    // Update based on query results
+    for (const row of results) {
+      const month = row.month;
+      // Only show status if there are past jobs in this month
+      if (row.pastJobsCount === 0) {
+        statusMap[month] = "empty";
+      } else if (row.unpaidCount > 0) {
+        statusMap[month] = "has-unpaid";
+      } else {
+        statusMap[month] = "all-paid";
+      }
+    }
+    
+    return statusMap;
+  },
+  ["month-payment-statuses"],
+  { tags: ["income-data"] }
+);
 
 /**
  * Calculate aggregates for a given month using optimized SQL queries
  */
-export async function getIncomeAggregatesForMonth({ year, month }: MonthFilter): Promise<IncomeAggregates> {
-  const { startDate, endDate } = getMonthBounds(year, month);
-  const today = getTodayString();
-  
-  // Prepare previous month bounds
-  const prevMonth = month === 1 ? 12 : month - 1;
-  const prevYear = month === 1 ? year - 1 : year;
-  const { startDate: prevStart, endDate: prevEnd } = getMonthBounds(prevYear, prevMonth);
+export const getIncomeAggregatesForMonth = unstable_cache(
+  async ({ year, month }: MonthFilter): Promise<IncomeAggregates> => {
+    const { startDate, endDate } = getMonthBounds(year, month);
+    const today = getTodayString();
+    
+    // Prepare previous month bounds
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear = month === 1 ? year - 1 : year;
+    const { startDate: prevStart, endDate: prevEnd } = getMonthBounds(prevYear, prevMonth);
 
-  // Execute all aggregate queries in parallel
-  const [
-    monthStatsResult,
-    monthVatEntries,
-    outstandingStatsResult,
-    readyToInvoiceStatsResult,
-    overdueStatsResult,
-    prevMonthStatsResult
-  ] = await Promise.all([
-    // 1. Current Month Aggregates
-    db
-      .select({
-        totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
-        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
-        jobsCount: count(),
-      })
-      .from(incomeEntries)
-      .where(
-        and(
-          gte(incomeEntries.date, startDate),
-          lte(incomeEntries.date, endDate)
+    // Execute all aggregate queries in parallel
+    const [
+      monthStatsResult,
+      vatTotalResult,
+      outstandingStatsResult,
+      readyToInvoiceStatsResult,
+      overdueStatsResult,
+      prevMonthStatsResult
+    ] = await Promise.all([
+      // 1. Current Month Aggregates
+      db
+        .select({
+          totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
+          totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
+          jobsCount: count(),
+        })
+        .from(incomeEntries)
+        .where(
+          and(
+            gte(incomeEntries.date, startDate),
+            lte(incomeEntries.date, endDate)
+          )
+        ),
+
+      // 2. VAT Total calculation directly in SQL
+      db
+        .select({
+          vatTotal: sql<string>`sum(
+            CASE 
+              WHEN ${incomeEntries.includesVat} THEN 
+                (${incomeEntries.amountGross} - (${incomeEntries.amountGross} / (1 + ${incomeEntries.vatRate} / 100)))
+              ELSE 
+                (${incomeEntries.amountGross} * (${incomeEntries.vatRate} / 100))
+            END
+          )`.mapWith(Number)
+        })
+        .from(incomeEntries)
+        .where(
+          and(
+            gte(incomeEntries.date, startDate),
+            lte(incomeEntries.date, endDate)
+          )
+        ),
+
+      // 3. Outstanding (Invoiced but not paid - across all time)
+      db
+        .select({
+          totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
+          totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
+          count: count(),
+        })
+        .from(incomeEntries)
+        .where(
+          and(
+            eq(incomeEntries.invoiceStatus, "sent"),
+            sql`${incomeEntries.paymentStatus} != 'paid'`
+          )
+        ),
+
+      // 4. Ready to Invoice (Past work, draft status - across all time)
+      db
+        .select({
+          total: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
+          count: count(),
+        })
+        .from(incomeEntries)
+        .where(
+          and(
+            eq(incomeEntries.invoiceStatus, "draft"),
+            lt(incomeEntries.date, today) // strictly less than today
+          )
+        ),
+
+      // 5. Overdue Count (Invoice sent > 30 days ago)
+      db
+        .select({ count: count() })
+        .from(incomeEntries)
+        .where(
+          and(
+            eq(incomeEntries.invoiceStatus, "sent"),
+            sql`${incomeEntries.paymentStatus} != 'paid'`,
+            sql`${incomeEntries.invoiceSentDate} < CURRENT_DATE - INTERVAL '30 days'`
+          )
+        ),
+
+      // 6. Previous Month Paid (for trend)
+      db
+        .select({
+          totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
+        })
+        .from(incomeEntries)
+        .where(
+          and(
+            gte(incomeEntries.date, prevStart),
+            lte(incomeEntries.date, prevEnd),
+            eq(incomeEntries.paymentStatus, "paid")
+          )
         )
-      ),
+    ]);
 
-    // 2. Entries for VAT calculation
-    db
-      .select({
-        amountGross: incomeEntries.amountGross,
-        vatRate: incomeEntries.vatRate,
-        includesVat: incomeEntries.includesVat,
-      })
-      .from(incomeEntries)
-      .where(
-        and(
-          gte(incomeEntries.date, startDate),
-          lte(incomeEntries.date, endDate)
-        )
-      ),
+    const monthStats = monthStatsResult[0];
+    const outstandingStats = outstandingStatsResult[0];
+    const readyToInvoiceStats = readyToInvoiceStatsResult[0];
+    const overdueStats = overdueStatsResult[0];
+    const prevMonthStats = prevMonthStatsResult[0];
 
-    // 3. Outstanding (Invoiced but not paid - across all time)
-    db
-      .select({
-        totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
-        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
-        count: count(),
-      })
-      .from(incomeEntries)
-      .where(
-        and(
-          eq(incomeEntries.invoiceStatus, "sent"),
-          sql`${incomeEntries.paymentStatus} != 'paid'`
-        )
-      ),
+    // Calculate VAT Total
+    const vatTotal = vatTotalResult[0]?.vatTotal || 0;
 
-    // 4. Ready to Invoice (Past work, draft status - across all time)
-    db
-      .select({
-        total: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
-        count: count(),
-      })
-      .from(incomeEntries)
-      .where(
-        and(
-          eq(incomeEntries.invoiceStatus, "draft"),
-          lt(incomeEntries.date, today) // strictly less than today
-        )
-      ),
+    const outstanding = Currency.subtract(
+      outstandingStats?.totalGross || 0, 
+      outstandingStats?.totalPaid || 0
+    );
+    const invoicedCount = outstandingStats?.count || 0;
 
-    // 5. Overdue Count (Invoice sent > 30 days ago)
-    db
-      .select({ count: count() })
-      .from(incomeEntries)
-      .where(
-        and(
-          eq(incomeEntries.invoiceStatus, "sent"),
-          sql`${incomeEntries.paymentStatus} != 'paid'`,
-          sql`${incomeEntries.invoiceSentDate} < CURRENT_DATE - INTERVAL '30 days'`
-        )
-      ),
+    const totalGross = monthStats?.totalGross || 0;
+    const totalPaid = monthStats?.totalPaid || 0;
+    const totalUnpaid = Currency.subtract(totalGross, totalPaid);
+    const previousMonthPaid = prevMonthStats?.totalPaid || 0;
 
-    // 6. Previous Month Paid (for trend)
-    db
-      .select({
-        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
-      })
-      .from(incomeEntries)
-      .where(
-        and(
-          gte(incomeEntries.date, prevStart),
-          lte(incomeEntries.date, prevEnd),
-          eq(incomeEntries.paymentStatus, "paid")
-        )
-      )
-  ]);
+    // Trend calculation
+    const trend = previousMonthPaid > 0
+      ? Currency.multiply(Currency.divide(Currency.subtract(totalPaid, previousMonthPaid), previousMonthPaid), 100)
+      : 0;
 
-  const monthStats = monthStatsResult[0];
-  const outstandingStats = outstandingStatsResult[0];
-  const readyToInvoiceStats = readyToInvoiceStatsResult[0];
-  const overdueStats = overdueStatsResult[0];
-  const prevMonthStats = prevMonthStatsResult[0];
-
-  // Calculate VAT Total
-  const vatTotal = monthVatEntries.reduce((acc, e) => {
-    const amount = Currency.fromString(e.amountGross);
-    const rate = Currency.divide(Currency.fromString(e.vatRate), 100);
-    if (e.includesVat) {
-      const vat = Currency.divide(Currency.multiply(amount, rate), Currency.add(1, rate));
-      return Currency.add(acc, vat);
-    }
-    const vat = Currency.multiply(amount, rate);
-    return Currency.add(acc, vat);
-  }, 0);
-
-  const outstanding = Currency.subtract(
-    outstandingStats?.totalGross || 0, 
-    outstandingStats?.totalPaid || 0
-  );
-  const invoicedCount = outstandingStats?.count || 0;
-
-  const totalGross = monthStats?.totalGross || 0;
-  const totalPaid = monthStats?.totalPaid || 0;
-  const totalUnpaid = Currency.subtract(totalGross, totalPaid);
-  const previousMonthPaid = prevMonthStats?.totalPaid || 0;
-
-  // Trend calculation
-  const trend = previousMonthPaid > 0
-    ? Currency.multiply(Currency.divide(Currency.subtract(totalPaid, previousMonthPaid), previousMonthPaid), 100)
-    : 0;
-
-  return {
-    totalGross,
-    totalPaid,
-    totalUnpaid,
-    vatTotal,
-    jobsCount: monthStats?.jobsCount || 0,
-    outstanding,
-    readyToInvoice: readyToInvoiceStats?.total || 0,
-    readyToInvoiceCount: readyToInvoiceStats?.count || 0,
-    invoicedCount,
-    overdueCount: overdueStats?.count || 0,
-    previousMonthPaid,
-    trend,
-  };
-}
+    return {
+      totalGross,
+      totalPaid,
+      totalUnpaid,
+      vatTotal,
+      jobsCount: monthStats?.jobsCount || 0,
+      outstanding,
+      readyToInvoice: readyToInvoiceStats?.total || 0,
+      readyToInvoiceCount: readyToInvoiceStats?.count || 0,
+      invoicedCount,
+      overdueCount: overdueStats?.count || 0,
+      previousMonthPaid,
+      trend,
+    };
+  },
+  ["income-aggregates"],
+  { tags: ["income-data"] }
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRUD operations (rest unchanged)

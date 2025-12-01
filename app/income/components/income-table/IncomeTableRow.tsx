@@ -55,7 +55,7 @@ interface IncomeTableRowProps {
   onInlineEdit?: (id: string, field: string, value: string | number) => void;
 }
 
-export function IncomeTableRow({
+export const IncomeTableRow = React.memo(function IncomeTableRow({
   entry,
   index,
   clients = [],
@@ -484,4 +484,4 @@ export function IncomeTableRow({
       </TableCell>
     </TableRow>
   );
-}
+});

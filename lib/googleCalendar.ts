@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { google, calendar_v3 } from "googleapis";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -41,7 +41,13 @@ function validateEnvVars() {
 // Google Calendar client
 // ─────────────────────────────────────────────────────────────────────────────
 
+let cachedCalendarClient: calendar_v3.Calendar | null = null;
+
 function getCalendarClient() {
+  if (cachedCalendarClient) {
+    return cachedCalendarClient;
+  }
+
   const { email, privateKey } = validateEnvVars();
 
   // Handle the case where the key contains literal "\n" characters
@@ -54,7 +60,8 @@ function getCalendarClient() {
     scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
   });
 
-  return google.calendar({ version: "v3", auth });
+  cachedCalendarClient = google.calendar({ version: "v3", auth });
+  return cachedCalendarClient;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

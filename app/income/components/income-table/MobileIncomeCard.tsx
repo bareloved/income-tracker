@@ -41,7 +41,7 @@ interface MobileIncomeCardProps {
   onDelete: (id: string) => void;
 }
 
-export function MobileIncomeCard({
+export const MobileIncomeCard = React.memo(function MobileIncomeCard({
   entry,
   onCardClick,
   onStatusChange,
@@ -268,5 +268,5 @@ export function MobileIncomeCard({
       </div>
     </div>
   );
-}
+});
 

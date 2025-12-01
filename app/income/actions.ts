@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import {
   createIncomeEntry,
   updateIncomeEntry,
@@ -51,6 +51,7 @@ export async function createIncomeEntryAction(formData: FormData) {
   try {
     const entry = await createIncomeEntry(input);
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, entry };
   } catch (error) {
     console.error("Failed to create income entry:", error);
@@ -91,6 +92,7 @@ export async function updateIncomeEntryAction(formData: FormData) {
   try {
     const entry = await updateIncomeEntry(input);
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, entry };
   } catch (error) {
     console.error("Failed to update income entry:", error);
@@ -109,6 +111,7 @@ export async function markIncomeEntryAsPaidAction(id: string) {
   try {
     const entry = await markIncomeEntryAsPaid(id);
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, entry };
   } catch (error) {
     console.error("Failed to mark entry as paid:", error);
@@ -127,6 +130,7 @@ export async function markInvoiceSentAction(id: string) {
   try {
     const entry = await markInvoiceSent(id);
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, entry };
   } catch (error) {
     console.error("Failed to mark invoice as sent:", error);
@@ -157,6 +161,7 @@ export async function updateEntryStatusAction(
     }
     
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, entry };
   } catch (error) {
     console.error("Failed to update entry status:", error);
@@ -175,6 +180,7 @@ export async function deleteIncomeEntryAction(id: string) {
   try {
     const deleted = await deleteIncomeEntry(id);
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: deleted };
   } catch (error) {
     console.error("Failed to delete income entry:", error);
@@ -199,6 +205,7 @@ export async function importFromCalendarAction(year: number, month: number) {
   try {
     const count = await importIncomeEntriesFromCalendarForMonth({ year, month });
     revalidatePath("/income");
+    updateTag("income-data");
     return { success: true, count };
   } catch (error) {
     console.error("Failed to import from calendar:", error);
