@@ -27,6 +27,8 @@ import {
   Clock,
   CalendarDays,
 } from "lucide-react";
+import { format } from "date-fns";
+import { he } from "date-fns/locale";
 import { IncomeEntry, DisplayStatus, STATUS_CONFIG } from "../../types";
 import {
   formatCurrency,
@@ -104,8 +106,8 @@ export function IncomeTableRow({
     setEditValue(currentValue);
   };
 
-  const saveEdit = () => {
-    if (!editingField || !onInlineEdit) return;
+  const saveCurrentValue = (): boolean => {
+    if (!editingField || !onInlineEdit) return false;
     
     let valueToSave: string | number = editValue;
     
@@ -113,8 +115,7 @@ export function IncomeTableRow({
     if (editingField === "amountGross") {
       const numValue = parseFloat(editValue.replace(/[^\d.-]/g, ""));
       if (isNaN(numValue)) {
-        cancelEdit();
-        return;
+        return false;
       }
       valueToSave = numValue;
     }
@@ -127,9 +128,16 @@ export function IncomeTableRow({
     if (valueToSave !== currentValue) {
       onInlineEdit(entry.id, editingField, valueToSave);
     }
-    
-    setEditingField(null);
-    setEditValue("");
+    return true;
+  };
+
+  const saveEdit = () => {
+    if (saveCurrentValue()) {
+      setEditingField(null);
+      setEditValue("");
+    } else {
+      cancelEdit();
+    }
   };
 
   const cancelEdit = () => {
@@ -144,8 +152,21 @@ export function IncomeTableRow({
     } else if (e.key === "Escape") {
       cancelEdit();
     } else if (e.key === "Tab") {
-      saveEdit();
-      // Tab navigation between fields could be added here
+      e.preventDefault();
+      if (saveCurrentValue()) {
+        if (editingField === "description") {
+          setEditingField("amountGross");
+          setEditValue(entry.amountGross.toString());
+        } else if (editingField === "amountGross") {
+          setEditingField("clientName");
+          setEditValue(entry.clientName);
+        } else {
+          setEditingField(null);
+          setEditValue("");
+        }
+      } else {
+        cancelEdit();
+      }
     }
   };
 
@@ -188,12 +209,13 @@ export function IncomeTableRow({
                 selected={new Date(entry.date)}
                 onSelect={(date) => {
                   if (date) {
-                    const dateStr = date.toISOString().split("T")[0];
+                    const dateStr = format(date, "yyyy-MM-dd");
                     onInlineEdit(entry.id, "date", dateStr);
                   }
                   setIsDatePickerOpen(false);
                 }}
                 initialFocus
+                locale={he}
               />
             </PopoverContent>
           </Popover>
@@ -225,7 +247,7 @@ export function IncomeTableRow({
         ) : (
           <div
             className={cn(
-              "flex flex-col gap-0.5 overflow-hidden rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+              "flex flex-col gap-0.5 overflow-hidden rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[28px] justify-center",
               onInlineEdit && "cursor-text"
             )}
             onClick={() => onInlineEdit && startEditing("description", entry.description)}
@@ -256,23 +278,25 @@ export function IncomeTableRow({
       </TableCell>
 
       {/* Amount */}
-      <TableCell className="font-semibold tabular-nums py-3">
+      <TableCell className="font-semibold tabular-nums py-3 w-[100px]">
         {editingField === "amountGross" ? (
-          <Input
-            ref={inputRef}
-            type="number"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={saveEdit}
-            onKeyDown={handleKeyDown}
-            className="h-7 text-sm w-[100px] px-2 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
-            dir="ltr"
-            step="0.01"
-          />
+          <div className="w-full">
+            <Input
+              ref={inputRef}
+              type="number"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={saveEdit}
+              onKeyDown={handleKeyDown}
+              className="h-7 text-sm w-full px-2 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              dir="ltr"
+              step="0.01"
+            />
+          </div>
         ) : (
           <span
             className={cn(
-              "text-sm rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors inline-block",
+              "text-sm rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors inline-block w-full text-right",
               displayStatus === "שולם"
                 ? "text-emerald-600 dark:text-emerald-400"
                 : "text-orange-600 dark:text-orange-400",
@@ -303,7 +327,7 @@ export function IncomeTableRow({
         ) : (
           <span
             className={cn(
-              "text-sm text-slate-600 dark:text-slate-400 font-medium truncate block rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+              "text-sm text-slate-600 dark:text-slate-400 font-medium truncate block rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[28px]",
               onInlineEdit && "cursor-text"
             )}
             onClick={() => onInlineEdit && startEditing("clientName", entry.clientName)}

@@ -90,3 +90,5 @@ export const CATEGORIES = [
 ] as const;
 
 export type Category = typeof CATEGORIES[number];
+
+export const DEFAULT_VAT_RATE = 18;

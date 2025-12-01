@@ -11,6 +11,7 @@ import {
   parseInvoiceStatus,
   parseDate 
 } from "./utils";
+import { DEFAULT_VAT_RATE } from "../types";
 
 interface ImportEntry {
   date: string;
@@ -172,7 +173,7 @@ export async function bulkImportEntries(
           clientName: entry.clientName,
           amountGross: entry.amountGross.toFixed(2),
           amountPaid: entry.amountPaid.toFixed(2),
-          vatRate: "17.00", // Default VAT
+          vatRate: DEFAULT_VAT_RATE.toString(), // Default VAT
           includesVat: true,
           invoiceStatus: entry.invoiceStatus,
           paymentStatus: entry.paymentStatus,

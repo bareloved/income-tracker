@@ -1,15 +1,15 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { Search, X, LayoutGrid, FileText, Clock, CheckCircle } from "lucide-react";
+import { Search, X, LayoutGrid, FileText, Clock, CheckCircle, ChevronDown } from "lucide-react";
 import { FilterType } from "../types";
 
 interface IncomeFiltersProps {
@@ -203,21 +203,37 @@ export function IncomeFilters({
 
           {/* Client Filter - Only shows clients from current month */}
           {clients.length > 0 && (
-            <Select value={selectedClient} onValueChange={onClientChange}>
-              <SelectTrigger className="w-[160px] h-9 text-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700">
-                <SelectValue placeholder="כל הלקוחות" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">כל הלקוחות</SelectItem>
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="w-[160px] h-9 text-sm justify-between bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 font-normal px-3"
+                >
+                  <span className="truncate">
+                    {selectedClient === "all" || !selectedClient
+                      ? "כל הלקוחות"
+                      : selectedClient}
+                  </span>
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-[160px] max-h-[300px] overflow-y-auto">
+                <DropdownMenuItem onClick={() => onClientChange("all")} className="justify-end">
+                  כל הלקוחות
+                </DropdownMenuItem>
                 {clients
                   .filter((client) => client && client.trim() !== "")
                   .map((client) => (
-                    <SelectItem key={client} value={client}>
+                    <DropdownMenuItem
+                      key={client}
+                      onClick={() => onClientChange(client)}
+                      className="justify-end"
+                    >
                       {client}
-                    </SelectItem>
+                    </DropdownMenuItem>
                   ))}
-              </SelectContent>
-            </Select>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
 

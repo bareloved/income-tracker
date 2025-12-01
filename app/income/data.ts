@@ -2,6 +2,7 @@ import { db } from "@/db/client";
 import { incomeEntries, type IncomeEntry, type NewIncomeEntry } from "@/db/schema";
 import { eq, and, gte, lte, asc, desc, sql, count, sum, lt } from "drizzle-orm";
 import { Currency } from "./currency";
+import { DEFAULT_VAT_RATE } from "./types";
 // Note: googleCalendar is imported lazily in importIncomeEntriesFromCalendarForMonth
 // to avoid googleapis side effects during module load
 
@@ -166,8 +167,8 @@ export async function getIncomeAggregatesForMonth({ year, month }: MonthFilter):
     // 1. Current Month Aggregates
     db
       .select({
-        totalGross: sum(incomeEntries.amountGross).mapWith(Number),
-        totalPaid: sum(incomeEntries.amountPaid).mapWith(Number),
+        totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
+        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
         jobsCount: count(),
       })
       .from(incomeEntries)
@@ -196,8 +197,8 @@ export async function getIncomeAggregatesForMonth({ year, month }: MonthFilter):
     // 3. Outstanding (Invoiced but not paid - across all time)
     db
       .select({
-        totalGross: sum(incomeEntries.amountGross).mapWith(Number),
-        totalPaid: sum(incomeEntries.amountPaid).mapWith(Number),
+        totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
+        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
         count: count(),
       })
       .from(incomeEntries)
@@ -211,7 +212,7 @@ export async function getIncomeAggregatesForMonth({ year, month }: MonthFilter):
     // 4. Ready to Invoice (Past work, draft status - across all time)
     db
       .select({
-        total: sum(incomeEntries.amountGross).mapWith(Number),
+        total: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
         count: count(),
       })
       .from(incomeEntries)
@@ -237,7 +238,7 @@ export async function getIncomeAggregatesForMonth({ year, month }: MonthFilter):
     // 6. Previous Month Paid (for trend)
     db
       .select({
-        totalPaid: sum(incomeEntries.amountPaid).mapWith(Number),
+        totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
       })
       .from(incomeEntries)
       .where(
@@ -331,7 +332,7 @@ export async function createIncomeEntry(input: CreateIncomeEntryInput): Promise<
       clientName: input.clientName,
       amountGross: input.amountGross.toFixed(2),
       amountPaid: (input.amountPaid ?? 0).toFixed(2),
-      vatRate: (input.vatRate ?? 18).toFixed(2),
+      vatRate: (input.vatRate ?? DEFAULT_VAT_RATE).toFixed(2),
       includesVat: input.includesVat ?? true,
       invoiceStatus: input.invoiceStatus ?? "draft",
       paymentStatus: input.paymentStatus ?? "unpaid",
@@ -596,7 +597,7 @@ export async function importIncomeEntriesFromCalendarForMonth({
       clientName: "", // Empty - user will fill in
       amountGross: "0", // Zero - user will fill in
       amountPaid: "0",
-      vatRate: "18", // Default VAT rate (Israel)
+      vatRate: DEFAULT_VAT_RATE.toString(), // Default VAT rate (Israel)
       includesVat: true,
       invoiceStatus: "draft" as const,
       paymentStatus: "unpaid" as const,

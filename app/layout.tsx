@@ -5,8 +5,11 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Income Tracker",
+  title: "SEDER",
   description: "Track your income and invoices",
+  icons: {
+    icon: "/logo.svg",
+  },
 };
 
 export default function RootLayout({

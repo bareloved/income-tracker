@@ -35,7 +35,7 @@ import {
   CATEGORIES,
   VatType,
 } from "../../types";
-import { formatFullDate, getDisplayStatus } from "../../utils";
+import { formatFullDate, getDisplayStatus, getVatTypeFromEntry } from "../../utils";
 
 interface IncomeDetailEditProps {
   entry: IncomeEntry;
@@ -62,7 +62,7 @@ export function IncomeDetailEdit({
   // Initialize state with derived fields
   const [editedEntry, setEditedEntry] = React.useState<EditableIncomeEntry>(() => {
     const status = getDisplayStatus(entry) || undefined;
-    const vatType = entry.includesVat ? "כולל מע״מ" : entry.vatRate === 0 ? "ללא מע״מ" : "חייב מע״מ";
+    const vatType = getVatTypeFromEntry(entry);
     return { ...entry, status, vatType };
   });
 
@@ -109,7 +109,7 @@ export function IncomeDetailEdit({
             <CalendarDays className="h-3.5 w-3.5" />
             תאריך
           </label>
-          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen} modal={false}>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"

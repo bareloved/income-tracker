@@ -8,7 +8,7 @@ import { IncomeFilters } from "./components/IncomeFilters";
 import { IncomeTable } from "./components/IncomeTable";
 import { IncomeDetailDialog } from "./components/IncomeDetailDialog";
 import { CalendarImportDialog } from "./components/CalendarImportDialog";
-import { exportToCSV, isOverdue, getDisplayStatus, calculateKPIs } from "./utils";
+import { exportToCSV, isOverdue, getDisplayStatus, calculateKPIs, mapStatusToDb, mapVatTypeToDb, getVatTypeFromEntry } from "./utils";
 import {
   createIncomeEntryAction,
   updateIncomeEntryAction,
@@ -102,7 +102,7 @@ export default function IncomePageClient({
   const [activeFilter, setActiveFilter] = React.useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedClient, setSelectedClient] = React.useState<string>("all");
-  const [sortDirection, setSortDirection] = React.useState<"asc" | "desc">("desc");
+  const [sortDirection, setSortDirection] = React.useState<"asc" | "desc">("asc");
 
   // Dialog state
   const [selectedEntry, setSelectedEntry] = React.useState<IncomeEntry | null>(null);
@@ -247,21 +247,17 @@ export default function IncomePageClient({
     if (entry.notes) formData.append("notes", entry.notes);
 
     // Map Hebrew status to DB status
-    if (entry.status === "שולם") {
-      formData.append("invoiceStatus", "paid");
-      formData.append("paymentStatus", "paid");
-    } else if (entry.status === "נשלחה") {
-      formData.append("invoiceStatus", "sent");
-    } else {
-      formData.append("invoiceStatus", "draft");
+    const statusMapping = mapStatusToDb(entry.status || "בוצע");
+    formData.append("invoiceStatus", statusMapping.invoiceStatus);
+    if (statusMapping.paymentStatus) {
+      formData.append("paymentStatus", statusMapping.paymentStatus);
     }
 
     // Map VAT type
-    if (entry.vatType === "ללא מע״מ") {
-      formData.append("vatRate", "0");
-      formData.append("includesVat", "false");
-    } else if (entry.vatType === "כולל מע״מ") {
-      formData.append("includesVat", "true");
+    if (entry.vatType) {
+      const vatMapping = mapVatTypeToDb(entry.vatType);
+      if (vatMapping.vatRate) formData.append("vatRate", vatMapping.vatRate);
+      formData.append("includesVat", vatMapping.includesVat);
     } else {
       formData.append("includesVat", "false");
     }
@@ -289,16 +285,12 @@ export default function IncomePageClient({
     formData.append("notes", updatedEntry.notes || "");
 
     // Map Hebrew status to DB status
-    // Use the display status if provided, otherwise fall back to existing DB status logic?
-    // Actually the drawer usually provides the display status
+    // Use the display status if provided, otherwise fall back to existing DB status logic
     if (updatedEntry.status) {
-      if (updatedEntry.status === "שולם") {
-        formData.append("invoiceStatus", "paid");
-        formData.append("paymentStatus", "paid");
-      } else if (updatedEntry.status === "נשלחה") {
-        formData.append("invoiceStatus", "sent");
-      } else {
-        formData.append("invoiceStatus", "draft");
+      const statusMapping = mapStatusToDb(updatedEntry.status);
+      formData.append("invoiceStatus", statusMapping.invoiceStatus);
+      if (statusMapping.paymentStatus) {
+        formData.append("paymentStatus", statusMapping.paymentStatus);
       }
     } else {
       // Fallback if status not explicitly changed in UI but exists in object
@@ -308,14 +300,9 @@ export default function IncomePageClient({
 
     // Map VAT type
     if (updatedEntry.vatType) {
-      if (updatedEntry.vatType === "ללא מע״מ") {
-        formData.append("vatRate", "0");
-        formData.append("includesVat", "false");
-      } else if (updatedEntry.vatType === "כולל מע״מ") {
-        formData.append("includesVat", "true");
-      } else {
-        formData.append("includesVat", "false");
-      }
+      const vatMapping = mapVatTypeToDb(updatedEntry.vatType);
+      if (vatMapping.vatRate) formData.append("vatRate", vatMapping.vatRate);
+      formData.append("includesVat", vatMapping.includesVat);
     } else {
         formData.append("vatRate", updatedEntry.vatRate.toString());
         formData.append("includesVat", String(updatedEntry.includesVat));
@@ -410,7 +397,7 @@ export default function IncomePageClient({
       category: entry.category,
       notes: entry.notes,
       status: "בוצע" as DisplayStatus,
-      vatType: entry.includesVat ? "כולל מע״מ" : entry.vatRate === 0 ? "ללא מע״מ" : "חייב מע״מ" as any
+      vatType: getVatTypeFromEntry(entry)
     };
     await addEntry(newEntry);
   };
@@ -484,9 +471,7 @@ export default function IncomePageClient({
   const handleCalendarImport = async (importYear: number, importMonth: number) => {
     try {
       const result = await importFromCalendarAction(importYear, importMonth);
-      if (result.success) {
-        console.log(`Imported ${result.count} entries from calendar`);
-      } else {
+      if (!result.success) {
         console.error("Failed to import from calendar:", result.error);
       }
     } catch (error) {

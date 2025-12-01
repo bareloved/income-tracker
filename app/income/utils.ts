@@ -1,5 +1,6 @@
-import { IncomeEntry, KPIData, DisplayStatus } from "./types";
+import { IncomeEntry, KPIData, DisplayStatus, VatType } from "./types";
 import { Currency } from "./currency";
+import { DEFAULT_VAT_RATE } from "./types";
 
 // Re-export Currency for convenience if needed, or just use it internally
 export { Currency };
@@ -183,6 +184,36 @@ export const MONTH_NAMES: Record<number, string> = {
   11: "נובמבר",
   12: "דצמבר",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Data Mapping Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function mapStatusToDb(status: DisplayStatus): { invoiceStatus: string; paymentStatus?: string } {
+  if (status === "שולם") {
+    return { invoiceStatus: "paid", paymentStatus: "paid" };
+  } else if (status === "נשלחה") {
+    return { invoiceStatus: "sent" };
+  } else {
+    return { invoiceStatus: "draft" };
+  }
+}
+
+export function mapVatTypeToDb(vatType: "חייב מע״מ" | "ללא מע״מ" | "כולל מע״מ"): { vatRate?: string; includesVat: string } {
+  if (vatType === "ללא מע״מ") {
+    return { vatRate: "0", includesVat: "false" };
+  } else if (vatType === "כולל מע״מ") {
+    return { includesVat: "true" };
+  } else {
+    return { includesVat: "false" };
+  }
+}
+
+export function getVatTypeFromEntry(entry: { includesVat: boolean; vatRate: number }): VatType {
+  if (entry.includesVat) return "כולל מע״מ";
+  if (entry.vatRate === 0) return "ללא מע״מ";
+  return "חייב מע״מ";
+}
 
 // Export entries to CSV
 export function exportToCSV(entries: IncomeEntry[], filename?: string): void {

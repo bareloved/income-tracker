@@ -1,0 +1,16 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Top Part -->
+  <path d="M40 70 L100 20 L160 70" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M40 50 L100 0 L160 50" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0"/> <!-- spacer/guide -->
+  <path d="M55 70 L100 32 L145 70" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70 70 L100 44 L130 70" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Text -->
+  <text x="100" y="110" font-family="Arial, sans-serif" font-weight="bold" font-size="40" text-anchor="middle" fill="currentColor" letter-spacing="2">SEDER</text>
+
+  <!-- Bottom Part -->
+  <path d="M40 130 L100 180 L160 130" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M55 130 L100 168 L145 130" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70 130 L100 156 L130 130" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+

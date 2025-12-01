@@ -99,7 +99,7 @@ export function IncomeTableQuickAdd({
     <TableRow className="bg-emerald-50/40 dark:bg-emerald-900/10 border-b-2 border-dashed border-emerald-200 dark:border-emerald-800/40 hover:bg-emerald-50/60 dark:hover:bg-emerald-900/20 print:hidden">
       <TableCell className="py-2">
         <div className="flex items-center justify-end gap-1">
-          <Popover>
+          <Popover modal={false}>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
@@ -120,6 +120,7 @@ export function IncomeTableQuickAdd({
                 selected={newEntryDate}
                 onSelect={setNewEntryDate}
                 initialFocus
+                locale={he}
               />
             </PopoverContent>
           </Popover>
