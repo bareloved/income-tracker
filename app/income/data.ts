@@ -1,11 +1,10 @@
 import { db } from "@/db/client";
-import { incomeEntries, type IncomeEntry, type NewIncomeEntry } from "@/db/schema";
-import { eq, and, gte, lte, asc, desc, sql, count, sum, lt } from "drizzle-orm";
+import { incomeEntries, account, type IncomeEntry, type NewIncomeEntry } from "@/db/schema";
+import { eq, and, gte, lte, asc, desc, sql, count, lt } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { Currency } from "./currency";
 import { DEFAULT_VAT_RATE } from "./types";
-// Note: googleCalendar is imported lazily in importIncomeEntriesFromCalendarForMonth
-// to avoid googleapis side effects during module load
+import { GoogleCalendarAuthError } from "@/lib/googleCalendar";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types for data helpers
@@ -14,6 +13,13 @@ import { DEFAULT_VAT_RATE } from "./types";
 export interface MonthFilter {
   year: number;
   month: number; // 1-12
+  userId: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ImportFilter extends MonthFilter {
+  accessToken: string;
 }
 
 export interface IncomeAggregates {
@@ -31,18 +37,23 @@ export interface IncomeAggregates {
   trend: number;              // % vs previous month
 }
 
+export type CalendarImportErrorType = "tokenExpired" | "unknown";
+
+export class CalendarImportError extends Error {
+  constructor(public type: CalendarImportErrorType, message: string) {
+    super(message);
+    this.name = "CalendarImportError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Date utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getMonthBounds(year: number, month: number): { startDate: string; endDate: string } {
-  // Calculate last day of month without timezone issues
   const lastDay = new Date(year, month, 0).getDate();
-  
-  // Build date strings directly to avoid timezone conversion issues
   const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-  
   return { startDate, endDate };
 }
 
@@ -55,9 +66,15 @@ function getTodayString(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Get all income entries for a specific month
+ * Get all income entries for a specific month and user
  */
-export async function getIncomeEntriesForMonth({ year, month }: MonthFilter): Promise<IncomeEntry[]> {
+export async function getIncomeEntriesForMonth({
+  year,
+  month,
+  userId,
+  limit = 500,
+  offset = 0,
+}: MonthFilter): Promise<IncomeEntry[]> {
   const { startDate, endDate } = getMonthBounds(year, month);
   
   const entries = await db
@@ -65,22 +82,26 @@ export async function getIncomeEntriesForMonth({ year, month }: MonthFilter): Pr
     .from(incomeEntries)
     .where(
       and(
+        eq(incomeEntries.userId, userId),
         gte(incomeEntries.date, startDate),
         lte(incomeEntries.date, endDate)
       )
     )
-    .orderBy(asc(incomeEntries.date), asc(incomeEntries.createdAt));
+    .orderBy(asc(incomeEntries.date), asc(incomeEntries.createdAt))
+    .limit(limit)
+    .offset(offset);
   
   return entries;
 }
 
 /**
- * Get all income entries (for cross-month calculations like outstanding invoices)
+ * Get all income entries for a user (for cross-month calculations)
  */
-export async function getAllIncomeEntries(): Promise<IncomeEntry[]> {
+export async function getAllIncomeEntries(userId: string): Promise<IncomeEntry[]> {
   const entries = await db
     .select()
     .from(incomeEntries)
+    .where(eq(incomeEntries.userId, userId))
     .orderBy(desc(incomeEntries.date));
   
   return entries;
@@ -92,47 +113,38 @@ export async function getAllIncomeEntries(): Promise<IncomeEntry[]> {
 export type MonthPaymentStatus = "all-paid" | "has-unpaid" | "empty";
 
 /**
- * Get payment status for all months in a year
- * Returns a map of month (1-12) -> status
- * Only considers PAST jobs (future gigs don't count for payment status)
+ * Get payment status for all months in a year for a specific user
  */
 export const getMonthPaymentStatuses = unstable_cache(
-  async (year: number): Promise<Record<number, MonthPaymentStatus>> => {
+  async (year: number, userId: string): Promise<Record<number, MonthPaymentStatus>> => {
     const startOfYear = `${year}-01-01`;
     const endOfYear = `${year}-12-31`;
     const today = getTodayString();
     
-    // Get counts of past entries and unpaid past entries per month
-    // We only consider jobs where the date has passed (work was done)
     const results = await db
       .select({
         month: sql<number>`EXTRACT(MONTH FROM ${incomeEntries.date})::int`,
-        // Only count past jobs (where date < today)
         pastJobsCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.date} < ${today})`,
-        // Count unpaid past jobs
         unpaidCount: sql<number>`COUNT(*) FILTER (WHERE ${incomeEntries.paymentStatus} != 'paid' AND ${incomeEntries.date} < ${today})`,
       })
       .from(incomeEntries)
       .where(
         and(
+          eq(incomeEntries.userId, userId),
           gte(incomeEntries.date, startOfYear),
           lte(incomeEntries.date, endOfYear)
         )
       )
       .groupBy(sql`EXTRACT(MONTH FROM ${incomeEntries.date})`);
     
-    // Build the status map
     const statusMap: Record<number, MonthPaymentStatus> = {};
     
-    // Initialize all months as empty
     for (let m = 1; m <= 12; m++) {
       statusMap[m] = "empty";
     }
     
-    // Update based on query results
     for (const row of results) {
       const month = row.month;
-      // Only show status if there are past jobs in this month
       if (row.pastJobsCount === 0) {
         statusMap[month] = "empty";
       } else if (row.unpaidCount > 0) {
@@ -149,19 +161,17 @@ export const getMonthPaymentStatuses = unstable_cache(
 );
 
 /**
- * Calculate aggregates for a given month using optimized SQL queries
+ * Calculate aggregates for a given month and user
  */
 export const getIncomeAggregatesForMonth = unstable_cache(
-  async ({ year, month }: MonthFilter): Promise<IncomeAggregates> => {
+  async ({ year, month, userId }: MonthFilter): Promise<IncomeAggregates> => {
     const { startDate, endDate } = getMonthBounds(year, month);
     const today = getTodayString();
     
-    // Prepare previous month bounds
     const prevMonth = month === 1 ? 12 : month - 1;
     const prevYear = month === 1 ? year - 1 : year;
     const { startDate: prevStart, endDate: prevEnd } = getMonthBounds(prevYear, prevMonth);
 
-    // Execute all aggregate queries in parallel
     const [
       monthStatsResult,
       vatTotalResult,
@@ -180,12 +190,13 @@ export const getIncomeAggregatesForMonth = unstable_cache(
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             gte(incomeEntries.date, startDate),
             lte(incomeEntries.date, endDate)
           )
         ),
 
-      // 2. VAT Total calculation directly in SQL
+      // 2. VAT Total
       db
         .select({
           vatTotal: sql<string>`sum(
@@ -200,12 +211,13 @@ export const getIncomeAggregatesForMonth = unstable_cache(
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             gte(incomeEntries.date, startDate),
             lte(incomeEntries.date, endDate)
           )
         ),
 
-      // 3. Outstanding (Invoiced but not paid - across all time)
+      // 3. Outstanding
       db
         .select({
           totalGross: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
@@ -215,12 +227,13 @@ export const getIncomeAggregatesForMonth = unstable_cache(
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             eq(incomeEntries.invoiceStatus, "sent"),
             sql`${incomeEntries.paymentStatus} != 'paid'`
           )
         ),
 
-      // 4. Ready to Invoice (Past work, draft status - across all time)
+      // 4. Ready to Invoice
       db
         .select({
           total: sql<string>`sum(${incomeEntries.amountGross})`.mapWith(Number),
@@ -229,24 +242,26 @@ export const getIncomeAggregatesForMonth = unstable_cache(
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             eq(incomeEntries.invoiceStatus, "draft"),
-            lt(incomeEntries.date, today) // strictly less than today
+            lt(incomeEntries.date, today)
           )
         ),
 
-      // 5. Overdue Count (Invoice sent > 30 days ago)
+      // 5. Overdue Count
       db
         .select({ count: count() })
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             eq(incomeEntries.invoiceStatus, "sent"),
             sql`${incomeEntries.paymentStatus} != 'paid'`,
             sql`${incomeEntries.invoiceSentDate} < CURRENT_DATE - INTERVAL '30 days'`
           )
         ),
 
-      // 6. Previous Month Paid (for trend)
+      // 6. Previous Month Paid
       db
         .select({
           totalPaid: sql<string>`sum(${incomeEntries.amountPaid})`.mapWith(Number),
@@ -254,6 +269,7 @@ export const getIncomeAggregatesForMonth = unstable_cache(
         .from(incomeEntries)
         .where(
           and(
+            eq(incomeEntries.userId, userId),
             gte(incomeEntries.date, prevStart),
             lte(incomeEntries.date, prevEnd),
             eq(incomeEntries.paymentStatus, "paid")
@@ -266,8 +282,6 @@ export const getIncomeAggregatesForMonth = unstable_cache(
     const readyToInvoiceStats = readyToInvoiceStatsResult[0];
     const overdueStats = overdueStatsResult[0];
     const prevMonthStats = prevMonthStatsResult[0];
-
-    // Calculate VAT Total
     const vatTotal = vatTotalResult[0]?.vatTotal || 0;
 
     const outstanding = Currency.subtract(
@@ -275,13 +289,11 @@ export const getIncomeAggregatesForMonth = unstable_cache(
       outstandingStats?.totalPaid || 0
     );
     const invoicedCount = outstandingStats?.count || 0;
-
     const totalGross = monthStats?.totalGross || 0;
     const totalPaid = monthStats?.totalPaid || 0;
     const totalUnpaid = Currency.subtract(totalGross, totalPaid);
     const previousMonthPaid = prevMonthStats?.totalPaid || 0;
 
-    // Trend calculation
     const trend = previousMonthPaid > 0
       ? Currency.multiply(Currency.divide(Currency.subtract(totalPaid, previousMonthPaid), previousMonthPaid), 100)
       : 0;
@@ -306,7 +318,7 @@ export const getIncomeAggregatesForMonth = unstable_cache(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CRUD operations (rest unchanged)
+// CRUD operations
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CreateIncomeEntryInput {
@@ -323,11 +335,9 @@ export interface CreateIncomeEntryInput {
   notes?: string;
   invoiceSentDate?: string;
   paidDate?: string;
+  userId: string; // Mandatory now
 }
 
-/**
- * Create a new income entry
- */
 export async function createIncomeEntry(input: CreateIncomeEntryInput): Promise<IncomeEntry> {
   const [entry] = await db
     .insert(incomeEntries)
@@ -345,18 +355,17 @@ export async function createIncomeEntry(input: CreateIncomeEntryInput): Promise<
       notes: input.notes,
       invoiceSentDate: input.invoiceSentDate,
       paidDate: input.paidDate,
+      userId: input.userId,
     })
     .returning();
   
-  if (!entry) {
-    throw new Error("Failed to create income entry - no entry returned");
-  }
-  
+  if (!entry) throw new Error("Failed to create income entry");
   return entry;
 }
 
 export interface UpdateIncomeEntryInput {
   id: string;
+  userId: string; // For ownership check
   date?: string;
   description?: string;
   clientName?: string;
@@ -372,15 +381,10 @@ export interface UpdateIncomeEntryInput {
   paidDate?: string | null;
 }
 
-/**
- * Update an existing income entry
- */
 export async function updateIncomeEntry(input: UpdateIncomeEntryInput): Promise<IncomeEntry> {
-  const { id, ...updates } = input;
+  const { id, userId, ...updates } = input;
   
-  // Build the update object with only defined values
   const updateData: Partial<NewIncomeEntry> = {};
-  
   if (updates.date !== undefined) updateData.date = updates.date;
   if (updates.description !== undefined) updateData.description = updates.description;
   if (updates.clientName !== undefined) updateData.clientName = updates.clientName;
@@ -395,39 +399,28 @@ export async function updateIncomeEntry(input: UpdateIncomeEntryInput): Promise<
   if (updates.invoiceSentDate !== undefined) updateData.invoiceSentDate = updates.invoiceSentDate ?? undefined;
   if (updates.paidDate !== undefined) updateData.paidDate = updates.paidDate ?? undefined;
   
-  // Always update updatedAt
   updateData.updatedAt = new Date();
   
   const [entry] = await db
     .update(incomeEntries)
     .set(updateData)
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning();
   
-  if (!entry) {
-    throw new Error(`Failed to update income entry - entry with id ${id} not found`);
-  }
-  
+  if (!entry) throw new Error(`Failed to update income entry - entry with id ${id} not found or access denied`);
   return entry;
 }
 
-/**
- * Mark an entry as paid (full payment)
- */
-export async function markIncomeEntryAsPaid(id: string): Promise<IncomeEntry> {
-  // First get the entry to get amountGross
+export async function markIncomeEntryAsPaid(id: string, userId: string): Promise<IncomeEntry> {
   const [existing] = await db
     .select()
     .from(incomeEntries)
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .limit(1);
   
-  if (!existing) {
-    throw new Error(`Cannot mark as paid - entry with id ${id} not found`);
-  }
+  if (!existing) throw new Error(`Cannot mark as paid - entry with id ${id} not found or access denied`);
   
   const today = getTodayString();
-  
   const [entry] = await db
     .update(incomeEntries)
     .set({
@@ -437,22 +430,15 @@ export async function markIncomeEntryAsPaid(id: string): Promise<IncomeEntry> {
       paidDate: today,
       updatedAt: new Date(),
     })
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning();
   
-  if (!entry) {
-    throw new Error(`Failed to mark entry ${id} as paid`);
-  }
-  
+  if (!entry) throw new Error(`Failed to mark entry ${id} as paid`);
   return entry;
 }
 
-/**
- * Mark an entry as invoice sent
- */
-export async function markInvoiceSent(id: string): Promise<IncomeEntry> {
+export async function markInvoiceSent(id: string, userId: string): Promise<IncomeEntry> {
   const today = getTodayString();
-  
   const [entry] = await db
     .update(incomeEntries)
     .set({
@@ -460,21 +446,14 @@ export async function markInvoiceSent(id: string): Promise<IncomeEntry> {
       invoiceSentDate: today,
       updatedAt: new Date(),
     })
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning();
   
-  if (!entry) {
-    throw new Error(`Failed to mark invoice sent - entry with id ${id} not found`);
-  }
-  
+  if (!entry) throw new Error(`Failed to mark invoice sent - entry with id ${id} not found or access denied`);
   return entry;
 }
 
-/**
- * Revert an entry to draft status (בוצע)
- * Clears invoiceSentDate and paidDate, resets payment status
- */
-export async function revertToDraft(id: string): Promise<IncomeEntry> {
+export async function revertToDraft(id: string, userId: string): Promise<IncomeEntry> {
   const [entry] = await db
     .update(incomeEntries)
     .set({
@@ -485,142 +464,116 @@ export async function revertToDraft(id: string): Promise<IncomeEntry> {
       amountPaid: "0",
       updatedAt: new Date(),
     })
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning();
   
-  if (!entry) {
-    throw new Error(`Failed to revert to draft - entry with id ${id} not found`);
-  }
-  
+  if (!entry) throw new Error(`Failed to revert to draft - entry with id ${id} not found or access denied`);
   return entry;
 }
 
-/**
- * Revert an entry to sent status (נשלחה)
- * Clears paidDate, resets payment status but keeps invoiceSentDate
- */
-export async function revertToSent(id: string): Promise<IncomeEntry> {
-  // First check if it already has an invoiceSentDate
+export async function revertToSent(id: string, userId: string): Promise<IncomeEntry> {
   const [existing] = await db
     .select()
     .from(incomeEntries)
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .limit(1);
   
-  if (!existing) {
-    throw new Error(`Cannot revert to sent - entry with id ${id} not found`);
-  }
+  if (!existing) throw new Error(`Cannot revert to sent - entry with id ${id} not found or access denied`);
   
   const today = getTodayString();
-  
   const [entry] = await db
     .update(incomeEntries)
     .set({
       invoiceStatus: "sent",
       paymentStatus: "unpaid",
-      // Keep existing invoiceSentDate or set to today if not set
       invoiceSentDate: existing.invoiceSentDate || today,
       paidDate: null,
       amountPaid: "0",
       updatedAt: new Date(),
     })
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning();
   
-  if (!entry) {
-    throw new Error(`Failed to revert to sent - entry with id ${id} not found`);
-  }
-  
+  if (!entry) throw new Error(`Failed to revert to sent - entry with id ${id} not found or access denied`);
   return entry;
 }
 
-/**
- * Delete an income entry
- */
-export async function deleteIncomeEntry(id: string): Promise<boolean> {
+export async function deleteIncomeEntry(id: string, userId: string): Promise<boolean> {
   const result = await db
     .delete(incomeEntries)
-    .where(eq(incomeEntries.id, id))
+    .where(and(eq(incomeEntries.id, id), eq(incomeEntries.userId, userId)))
     .returning({ id: incomeEntries.id });
   
   return result.length > 0;
 }
 
-/**
- * Get unique client names from all entries
- */
-export async function getUniqueClients(): Promise<string[]> {
+export async function getUniqueClients(userId: string): Promise<string[]> {
   const results = await db
-    .selectDistinct({ clientName: incomeEntries.clientName })
+    .select({ clientName: incomeEntries.clientName })
     .from(incomeEntries)
+    .where(eq(incomeEntries.userId, userId))
+    .groupBy(incomeEntries.clientName)
     .orderBy(asc(incomeEntries.clientName));
   
   return results.map((r) => r.clientName);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Calendar Import
-// ─────────────────────────────────────────────────────────────────────────────
+export async function hasGoogleCalendarConnection(userId: string): Promise<boolean> {
+  const accounts = await db
+    .select()
+    .from(account)
+    .where(and(eq(account.userId, userId), eq(account.providerId, "google")))
+    .limit(1);
 
-/**
- * Import income entries from Google Calendar for a specific month.
- * Creates draft entries for new calendar events that don't already exist in the database.
- * 
- * Uses two layers of duplicate protection:
- * 1. Unique constraint on calendarEventId in the database
- * 2. onConflictDoNothing to gracefully skip duplicate inserts
- * 
- * This makes the import idempotent - calling it multiple times for the same
- * month will not create duplicate entries for the same Google Calendar event.
- * 
- * @param year - The year (e.g., 2024)
- * @param month - The month (1-12)
- * @returns The number of new entries imported
- */
+  return accounts.length > 0;
+}
+
 export async function importIncomeEntriesFromCalendarForMonth({
   year,
   month,
-}: MonthFilter): Promise<number> {
-  // Lazy import to avoid googleapis side effects during module load
+  userId,
+  accessToken,
+}: ImportFilter): Promise<number> {
   const { listEventsForMonth } = await import("@/lib/googleCalendar");
-  
-  // Fetch events for the selected month
-  const calendarEvents = await listEventsForMonth(year, month);
+  try {
+    const calendarEvents = await listEventsForMonth(year, month, accessToken);
 
-  if (calendarEvents.length === 0) {
-    return 0;
+    if (calendarEvents.length === 0) return 0;
+
+    const rowsToInsert: NewIncomeEntry[] = calendarEvents.map((event) => {
+      const dateString = event.start.toISOString().split("T")[0];
+      return {
+        date: dateString,
+        description: event.summary || "אירוע מהיומן",
+        clientName: "",
+        amountGross: "0",
+        amountPaid: "0",
+        vatRate: DEFAULT_VAT_RATE.toString(),
+        includesVat: true,
+        invoiceStatus: "draft" as const,
+        paymentStatus: "unpaid" as const,
+        calendarEventId: event.id,
+        notes: "יובא מהיומן",
+        userId: userId,
+      };
+    });
+
+    const result = await db
+      .insert(incomeEntries)
+      .values(rowsToInsert)
+      .onConflictDoNothing({
+        target: [incomeEntries.userId, incomeEntries.calendarEventId],
+      })
+      .returning({ id: incomeEntries.id });
+
+    return result.length;
+  } catch (error) {
+    if (error instanceof GoogleCalendarAuthError) {
+      throw new CalendarImportError("tokenExpired", "Google token expired or revoked");
+    }
+    throw new CalendarImportError(
+      "unknown",
+      error instanceof Error ? error.message : "Unknown error during calendar import"
+    );
   }
-
-  // Convert all calendar events to income entry inserts
-  const rowsToInsert: NewIncomeEntry[] = calendarEvents.map((event) => {
-    // Extract date-only string from start date
-    const dateString = event.start.toISOString().split("T")[0];
-
-    return {
-      date: dateString,
-      description: event.summary || "אירוע מהיומן",
-      clientName: "", // Empty - user will fill in
-      amountGross: "0", // Zero - user will fill in
-      amountPaid: "0",
-      vatRate: DEFAULT_VAT_RATE.toString(), // Default VAT rate (Israel)
-      includesVat: true,
-      invoiceStatus: "draft" as const,
-      paymentStatus: "unpaid" as const,
-      calendarEventId: event.id,
-      notes: "יובא מהיומן",
-    };
-  });
-
-  // Bulk insert with onConflictDoNothing - duplicates are silently skipped
-  // thanks to the unique index on calendarEventId
-  const result = await db
-    .insert(incomeEntries)
-    .values(rowsToInsert)
-    .onConflictDoNothing({
-      target: incomeEntries.calendarEventId,
-    })
-    .returning({ id: incomeEntries.id });
-
-  // Return the actual number of rows inserted
-  return result.length;
 }

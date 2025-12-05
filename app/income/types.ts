@@ -14,6 +14,7 @@ export interface IncomeEntry {
   date: string;
   description: string;
   clientName: string; // Aligned with DB column
+  userId?: string;
   amountGross: number;
   amountPaid: number;
   vatRate: number;

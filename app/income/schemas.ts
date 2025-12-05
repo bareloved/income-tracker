@@ -5,21 +5,20 @@ import { invoiceStatusValues, paymentStatusValues } from "@/db/schema";
 // Basic field schemas
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)");
 const amountSchema = zfd.numeric(z.number().min(0));
-const optionalAmountSchema = zfd.numeric(z.number().min(0).optional().default(0));
-
 // Create Entry Schema
 export const createIncomeEntrySchema = zfd.formData({
   date: dateSchema,
   description: zfd.text(z.string().min(1, "Description is required")),
   clientName: zfd.text(z.string().min(1, "Client name is required")),
   amountGross: amountSchema,
-  amountPaid: optionalAmountSchema,
+  amountPaid: zfd.numeric(z.number().min(0).optional().default(0)),
   category: zfd.text(z.string().optional()),
   notes: zfd.text(z.string().optional()),
   vatRate: zfd.numeric(z.number().min(0).default(18)),
-  includesVat: zfd.checkbox({ trueValue: "true" }), // "true" -> true, undefined/other -> false
-  invoiceStatus: zfd.text(z.enum(invoiceStatusValues).default("draft")),
-  paymentStatus: zfd.text(z.enum(paymentStatusValues).default("unpaid")),
+  // Handle boolean string "true"/"false" or checkbox value
+  includesVat: zfd.text(z.string().transform((val) => val === "true")),
+  invoiceStatus: zfd.text(z.enum(invoiceStatusValues).optional().default("draft")),
+  paymentStatus: zfd.text(z.enum(paymentStatusValues).optional().default("unpaid")),
   // Optional date fields
   invoiceSentDate: zfd.text(z.string().optional()),
   paidDate: zfd.text(z.string().optional()),
@@ -36,7 +35,7 @@ export const updateIncomeEntrySchema = zfd.formData({
   category: zfd.text(z.string().optional()),
   notes: zfd.text(z.string().optional()),
   vatRate: zfd.numeric(z.number().min(0).optional()),
-  includesVat: zfd.checkbox({ trueValue: "true" }).optional(),
+  includesVat: zfd.text(z.string().transform((val) => val === "true")).optional(),
   invoiceStatus: zfd.text(z.enum(invoiceStatusValues).optional()),
   paymentStatus: zfd.text(z.enum(paymentStatusValues).optional()),
   invoiceSentDate: zfd.text(z.string().optional().nullable()),

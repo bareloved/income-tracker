@@ -4,6 +4,13 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -13,22 +20,25 @@ import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Plus, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
-import { IncomeEntry, DisplayStatus, VatType } from "../../types";
+import { IncomeEntry, DisplayStatus, VatType, CATEGORIES } from "../../types";
 
 interface MobileQuickAddProps {
-  onAddEntry: (entry: Omit<IncomeEntry, "id" | "invoiceStatus" | "paymentStatus" | "vatRate" | "includesVat"> & { status?: DisplayStatus, vatType?: VatType }) => void;
+  onAddEntry: (entry: Omit<IncomeEntry, "id" | "invoiceStatus" | "paymentStatus" | "vatRate" | "includesVat"> & { status?: DisplayStatus, vatType?: VatType, invoiceStatus?: "draft" | "sent" | "paid" | "cancelled", paymentStatus?: "unpaid" | "partial" | "paid", vatRate?: number, includesVat?: boolean }) => void;
   clients: string[];
+  defaultDate?: string;
 }
 
 export function MobileQuickAdd({
   onAddEntry,
   clients,
+  defaultDate,
 }: MobileQuickAddProps) {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const [newEntryDate, setNewEntryDate] = React.useState<Date>();
   const [description, setDescription] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [clientName, setClientName] = React.useState("");
+  const [category, setCategory] = React.useState("");
   const [showClientSuggestions, setShowClientSuggestions] = React.useState(false);
 
   // Filter clients for autocomplete
@@ -38,6 +48,12 @@ export function MobileQuickAdd({
       .filter((c) => c.toLowerCase().includes(clientName.toLowerCase()))
       .slice(0, 5);
   }, [clients, clientName]);
+
+  React.useEffect(() => {
+    if (defaultDate && isExpanded) {
+      setNewEntryDate(new Date(defaultDate));
+    }
+  }, [defaultDate, isExpanded]);
 
   const handleAddEntry = () => {
     if (!description && !amount) return;
@@ -49,14 +65,20 @@ export function MobileQuickAdd({
       amountGross: parseFloat(amount) || 0,
       amountPaid: 0,
       clientName: clientName || "לא צוין",
+      category: category || undefined,
       status: "בוצע",
       vatType: "חייב מע״מ",
+      invoiceStatus: "draft",
+      paymentStatus: "unpaid",
+      vatRate: 18,
+      includesVat: true
     });
 
     // Clear form and collapse
     setDescription("");
     setAmount("");
     setClientName("");
+    setCategory("");
     setNewEntryDate(undefined);
     setIsExpanded(false);
   };
@@ -129,6 +151,20 @@ export function MobileQuickAdd({
         placeholder="תיאור העבודה"
         className="h-10 text-sm bg-white dark:bg-slate-800"
       />
+
+      {/* Category */}
+      <Select value={category} onValueChange={setCategory}>
+        <SelectTrigger className="h-10 w-full text-sm bg-white dark:bg-slate-800 text-right justify-between" dir="rtl">
+          <SelectValue placeholder="בחר קטגוריה" />
+        </SelectTrigger>
+        <SelectContent align="end" dir="rtl">
+          {CATEGORIES.map((c) => (
+            <SelectItem key={c} value={c}>
+              {c}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       {/* Amount + Client in a row */}
       <div className="flex gap-2">

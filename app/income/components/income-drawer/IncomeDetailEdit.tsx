@@ -4,12 +4,11 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -25,25 +24,26 @@ import {
   CreditCard,
   Tag,
   Check,
+  ChevronDown,
 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import {
   IncomeEntry,
   DisplayStatus,
-  STATUS_CONFIG,
   CATEGORIES,
   VatType,
 } from "../../types";
 import { formatFullDate, getDisplayStatus, getVatTypeFromEntry } from "../../utils";
+import { CategoryChip } from "../CategoryChip";
 
 interface IncomeDetailEditProps {
   entry: IncomeEntry;
   onSave: (entry: IncomeEntry & { status?: DisplayStatus; vatType?: VatType }) => void;
   onClose: () => void;
-  onStatusChange: (id: string, status: DisplayStatus) => void;
   onMarkAsPaid: (id: string) => void;
   onMarkInvoiceSent: (id: string) => void;
+  initialFocusField?: "description" | "amount" | "clientName";
 }
 
 type EditableIncomeEntry = IncomeEntry & {
@@ -55,9 +55,9 @@ export function IncomeDetailEdit({
   entry,
   onSave,
   onClose,
-  onStatusChange,
   onMarkAsPaid,
   onMarkInvoiceSent,
+  initialFocusField,
 }: IncomeDetailEditProps) {
   // Initialize state with derived fields
   const [editedEntry, setEditedEntry] = React.useState<EditableIncomeEntry>(() => {
@@ -68,6 +68,9 @@ export function IncomeDetailEdit({
 
   const [isDirty, setIsDirty] = React.useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
+  const descriptionRef = React.useRef<HTMLInputElement>(null);
+  const amountRef = React.useRef<HTMLInputElement>(null);
+  const clientRef = React.useRef<HTMLInputElement>(null);
 
   const handleSave = () => {
     onSave(editedEntry);
@@ -85,6 +88,22 @@ export function IncomeDetailEdit({
   const inputClassName = "h-auto py-1 px-2 -mx-2 text-base font-semibold text-slate-900 dark:text-slate-100 bg-transparent border border-transparent hover:border-slate-200 dark:hover:border-slate-700 focus:bg-white dark:focus:bg-slate-900 focus:ring-0 focus:border-slate-300 dark:focus:border-slate-600 focus-visible:ring-0 focus-visible:ring-offset-0 rounded transition-all shadow-none text-right";
   const labelClassName = "text-xs font-medium text-slate-400 dark:text-slate-500 mb-1 flex items-center gap-1.5";
 
+  React.useEffect(() => {
+    if (entry.id === "new" && initialFocusField) {
+      const target =
+        initialFocusField === "description"
+          ? descriptionRef.current
+          : initialFocusField === "amount"
+            ? amountRef.current
+            : clientRef.current;
+
+      target?.focus();
+      if (target instanceof HTMLInputElement) {
+        target.select();
+      }
+    }
+  }, [entry.id, initialFocusField]);
+
   return (
     <div className="space-y-6 py-4">
       
@@ -97,6 +116,7 @@ export function IncomeDetailEdit({
             לקוח
           </label>
           <Input
+            ref={clientRef}
             value={editedEntry.clientName}
             onChange={(e) => handleChange({ clientName: e.target.value })}
             className={inputClassName}
@@ -109,7 +129,7 @@ export function IncomeDetailEdit({
             <CalendarDays className="h-3.5 w-3.5" />
             תאריך
           </label>
-          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen} modal={false}>
+          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
@@ -147,6 +167,7 @@ export function IncomeDetailEdit({
           תיאור עבודה
         </label>
         <Input
+          ref={descriptionRef}
           value={editedEntry.description}
           onChange={(e) => handleChange({ description: e.target.value })}
           className={inputClassName}
@@ -162,6 +183,7 @@ export function IncomeDetailEdit({
             סכום
           </label>
           <Input
+            ref={amountRef}
             type="text"
             inputMode="decimal"
             pattern="[0-9]*"
@@ -179,21 +201,37 @@ export function IncomeDetailEdit({
             <Tag className="h-3.5 w-3.5" />
             קטגוריה
           </label>
-          <Select
-            value={editedEntry.category || ""}
-            onValueChange={(v) => handleChange({ category: v })}
-          >
-            <SelectTrigger className={cn(inputClassName, "w-full [&>span]:text-right [&>span]:flex-1")}>
-              <SelectValue placeholder="בחר קטגוריה" />
-            </SelectTrigger>
-            <SelectContent>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className={cn(
+                  inputClassName,
+                  "w-full justify-between font-normal px-2"
+                )}
+              >
+                <span className="flex-1 text-right">
+                  {editedEntry.category ? (
+                    <CategoryChip category={editedEntry.category} size="sm" className="mr-1" />
+                  ) : (
+                    <span className="text-slate-400 dark:text-slate-500">בחר קטגוריה</span>
+                  )}
+                </span>
+                <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[200px]" align="end">
               {CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat}>
-                  {cat}
-                </SelectItem>
+                <DropdownMenuItem
+                  key={cat}
+                  onClick={() => handleChange({ category: cat })}
+                  className="justify-end"
+                >
+                  <CategoryChip category={cat} size="sm" />
+                </DropdownMenuItem>
               ))}
-            </SelectContent>
-          </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -213,9 +251,18 @@ export function IncomeDetailEdit({
 
       {/* Footer Actions */}
       <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-        
-        {/* Primary Status Actions */}
-        {displayStatus === "בוצע" && (
+        {/* Save Changes (only if dirty) */}
+        {isDirty && (
+          <Button
+            onClick={handleSave}
+            className="flex-1 bg-slate-900 text-white hover:bg-slate-800"
+          >
+            שמור שינויים
+          </Button>
+        )}
+
+        {/* Primary Status Actions - Only for existing entries */}
+        {entry.id !== "new" && displayStatus === "בוצע" && (
           <Button
             onClick={() => onMarkInvoiceSent(entry.id)}
             className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
@@ -225,23 +272,13 @@ export function IncomeDetailEdit({
           </Button>
         )}
 
-        {displayStatus === "נשלחה" && (
+        {entry.id !== "new" && displayStatus === "נשלחה" && (
           <Button
             onClick={() => onMarkAsPaid(entry.id)}
             className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white"
           >
             <Check className="h-4 w-4 ml-2" />
             התקבל תשלום
-          </Button>
-        )}
-
-        {/* Save Changes (only if dirty) */}
-        {isDirty && (
-          <Button
-            onClick={handleSave}
-            className="flex-1 bg-slate-900 text-white hover:bg-slate-800"
-          >
-            שמור שינויים
           </Button>
         )}
 

@@ -9,8 +9,8 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { IncomeEntry, DisplayStatus, STATUS_CONFIG } from "../types";
-import { getDisplayStatus } from "../utils";
+import { IncomeEntry, DisplayStatus, STATUS_CONFIG, DEFAULT_VAT_RATE, VatType } from "../types";
+import { getDisplayStatus, getTodayDateString } from "../utils";
 import { IncomeDetailEdit } from "./income-drawer/IncomeDetailEdit";
 
 interface IncomeDetailDialogProps {
@@ -20,7 +20,9 @@ interface IncomeDetailDialogProps {
   onMarkAsPaid: (id: string) => void;
   onMarkInvoiceSent: (id: string) => void;
   onUpdate: (entry: IncomeEntry) => void;
-  onStatusChange: (id: string, status: DisplayStatus) => void;
+  onAdd: (entry: IncomeEntry & { status?: DisplayStatus; vatType?: VatType }) => void;
+  defaultDateForNew?: string;
+  initialFocusField?: "description" | "amount" | "clientName";
 }
 
 export function IncomeDetailDialog({
@@ -30,11 +32,31 @@ export function IncomeDetailDialog({
   onMarkAsPaid,
   onMarkInvoiceSent,
   onUpdate,
-  onStatusChange,
+  onAdd,
+  defaultDateForNew,
+  initialFocusField,
 }: IncomeDetailDialogProps) {
-  if (!entry) return null;
+  // If not open, don't render anything (avoids flash of default content)
+  if (!isOpen) return null;
 
-  const displayStatus = getDisplayStatus(entry);
+  const isNew = !entry;
+  
+  const effectiveEntry: IncomeEntry = entry || {
+    id: "new",
+    date: defaultDateForNew || getTodayDateString(),
+    description: "",
+    clientName: "",
+    amountGross: 0,
+    amountPaid: 0,
+    vatRate: DEFAULT_VAT_RATE,
+    includesVat: false,
+    invoiceStatus: "draft",
+    paymentStatus: "unpaid",
+    category: "",
+    notes: "",
+  };
+
+  const displayStatus = getDisplayStatus(effectiveEntry);
   const statusConfig = displayStatus ? STATUS_CONFIG[displayStatus] : null;
 
   return (
@@ -46,9 +68,9 @@ export function IncomeDetailDialog({
         <DialogHeader className="pb-4 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-lg font-bold text-slate-800 dark:text-slate-100">
-              פרטי עבודה
+              {isNew ? "עבודה חדשה" : "פרטי עבודה"}
             </DialogTitle>
-            {statusConfig && (
+            {statusConfig && !isNew && (
               <Badge
                 className={cn(
                   "text-xs px-2.5 py-1 rounded-full font-medium border",
@@ -64,15 +86,19 @@ export function IncomeDetailDialog({
         </DialogHeader>
 
           <IncomeDetailEdit
-            entry={entry}
+            entry={effectiveEntry}
             onSave={(updatedEntry) => {
-              onUpdate(updatedEntry);
-            onClose();
+              if (isNew) {
+                onAdd(updatedEntry);
+              } else {
+                onUpdate(updatedEntry);
+              }
+              onClose();
             }}
-          onClose={onClose}
-            onStatusChange={onStatusChange}
+            onClose={onClose}
             onMarkAsPaid={onMarkAsPaid}
             onMarkInvoiceSent={onMarkInvoiceSent}
+            initialFocusField={initialFocusField}
           />
       </DialogContent>
     </Dialog>

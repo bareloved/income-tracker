@@ -17,6 +17,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   Check,
@@ -24,12 +29,12 @@ import {
   Copy,
   Trash2,
   FileText,
-  Clock,
   CalendarDays,
+  StickyNote,
 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
-import { IncomeEntry, DisplayStatus, STATUS_CONFIG } from "../../types";
+import { IncomeEntry, DisplayStatus, STATUS_CONFIG, CATEGORIES } from "../../types";
 import {
   formatCurrency,
   formatDate,
@@ -39,8 +44,9 @@ import {
   isPastDate,
   getWeekday,
 } from "../../utils";
+import { CategoryChip } from "../CategoryChip";
 
-type EditableField = "date" | "description" | "amountGross" | "clientName" | null;
+type EditableField = "date" | "description" | "amountGross" | "clientName" | "category" | null;
 
 interface IncomeTableRowProps {
   entry: IncomeEntry;
@@ -75,6 +81,12 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
     ? daysSince(entry.invoiceSentDate)
     : null;
   const isFutureGig = !isPastDate(entry.date);
+  const notePreviewRaw = (entry.notes || "").trim();
+  const isCalendarImportNote = notePreviewRaw === "יובא מהיומן";
+  const notePreview = isCalendarImportNote ? "" : notePreviewRaw;
+  const notePreviewShort =
+    notePreview.length > 80 ? `${notePreview.slice(0, 80)}...` : notePreview;
+  const hasNotes = notePreviewShort.length > 0;
   
   // Check if this is an unpaid past job (work done but not fully paid)
   const isUnpaidPast = !isFutureGig && entry.paymentStatus !== "paid";
@@ -90,6 +102,7 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
   const [editingField, setEditingField] = React.useState<EditableField>(null);
   const [editValue, setEditValue] = React.useState<string>("");
   const [isDatePickerOpen, setIsDatePickerOpen] = React.useState(false);
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   // Focus input when editing starts
@@ -104,6 +117,11 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
     if (!onInlineEdit) return;
     setEditingField(field);
     setEditValue(currentValue);
+    
+    // Open category dropdown when editing category
+    if (field === "category") {
+      setIsCategoryDropdownOpen(true);
+    }
   };
 
   const saveCurrentValue = (): boolean => {
@@ -143,6 +161,7 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
   const cancelEdit = () => {
     setEditingField(null);
     setEditValue("");
+    setIsCategoryDropdownOpen(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -160,6 +179,10 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
         } else if (editingField === "amountGross") {
           setEditingField("clientName");
           setEditValue(entry.clientName);
+        } else if (editingField === "clientName") {
+          setEditingField("category");
+          setEditValue(entry.category || "");
+          setIsCategoryDropdownOpen(true);
         } else {
           setEditingField(null);
           setEditValue("");
@@ -186,19 +209,19 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
       )}
     >
       {/* Date */}
-      <TableCell className="font-medium py-3">
+      <TableCell className="font-medium py-3 pl-0">
         {onInlineEdit ? (
           <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
             <PopoverTrigger asChild>
               <div
                 className={cn(
-                  "flex items-center gap-1.5 cursor-pointer rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  "flex items-center gap-1 cursor-pointer rounded-md px-0.5 py-1 -mx-0.5 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-numbers"
                 )}
               >
                 <span className="text-sm text-slate-800 dark:text-slate-200">
                   {formatDate(entry.date)}
                 </span>
-                <span className="text-xs text-slate-400 dark:text-slate-500">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500">
                   ({getWeekday(new Date(entry.date))})
                 </span>
               </div>
@@ -220,11 +243,11 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
             </PopoverContent>
           </Popover>
         ) : (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 font-numbers">
             <span className="text-sm text-slate-800 dark:text-slate-200">
               {formatDate(entry.date)}
             </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
               ({getWeekday(new Date(entry.date))})
             </span>
           </div>
@@ -232,7 +255,7 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
       </TableCell>
 
       {/* Description */}
-      <TableCell className="py-3">
+      <TableCell className="py-3 pr-1">
         {editingField === "description" ? (
           <Input
             ref={inputRef}
@@ -247,15 +270,27 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
         ) : (
           <div
             className={cn(
-              "flex flex-col gap-0.5 overflow-hidden rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[28px] justify-center",
+              "relative flex flex-col gap-0.5 overflow-hidden rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[28px] justify-center",
               onInlineEdit && "cursor-text"
             )}
             onClick={() => onInlineEdit && startEditing("description", entry.description)}
           >
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
+            <div className="flex items-center gap-1.5 pr-4">
+              <span className="text-sm text-slate-700 dark:text-slate-300 leading-snug line-clamp-2 break-words text-right">
                 {entry.description}
               </span>
+              {hasNotes && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-5 w-5 rounded-full bg-amber-50 dark:bg-amber-900/30">
+                      <StickyNote className="h-3.5 w-3.5 text-amber-600 dark:text-amber-300" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                    <p>{notePreviewShort}</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {isCalendarDraft && (
                 <Badge
                   className={cn(
@@ -268,19 +303,14 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
                 </Badge>
               )}
             </div>
-            {entry.category && (
-              <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                {entry.category}
-              </span>
-            )}
           </div>
         )}
       </TableCell>
 
-      {/* Amount */}
-      <TableCell className="font-semibold tabular-nums py-3 w-[100px]">
-        {editingField === "amountGross" ? (
-          <div className="w-full">
+      {/* Amount - w-[90px] to match header */}
+      <TableCell className="font-semibold tabular-nums py-3 w-[90px] px-2">
+        <div className="flex justify-end">
+          {editingField === "amountGross" ? (
             <Input
               ref={inputRef}
               type="number"
@@ -292,22 +322,22 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
               dir="ltr"
               step="0.01"
             />
-          </div>
-        ) : (
-          <span
-            className={cn(
-              "text-sm rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors inline-block w-full text-right",
-              displayStatus === "שולם"
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-orange-600 dark:text-orange-400",
-              onInlineEdit && "cursor-text"
-            )}
-            dir="ltr"
-            onClick={() => onInlineEdit && startEditing("amountGross", entry.amountGross.toString())}
-          >
-            {formatCurrency(entry.amountGross)}
-          </span>
-        )}
+          ) : (
+            <span
+              className={cn(
+                "text-sm rounded-md px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-numbers",
+                displayStatus === "שולם"
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-orange-600 dark:text-orange-400",
+                onInlineEdit && "cursor-text"
+              )}
+              dir="ltr"
+              onClick={() => onInlineEdit && startEditing("amountGross", entry.amountGross.toString())}
+            >
+              {formatCurrency(entry.amountGross)}
+            </span>
+          )}
+        </div>
       </TableCell>
 
       {/* Client */}
@@ -343,8 +373,75 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
         </datalist>
       </TableCell>
 
+      {/* Category */}
+      <TableCell className="py-3 overflow-hidden">
+        {editingField === "category" && onInlineEdit ? (
+          <DropdownMenu
+            open={isCategoryDropdownOpen}
+            onOpenChange={(open) => {
+              setIsCategoryDropdownOpen(open);
+              if (!open) {
+                setEditingField(null);
+                setEditValue("");
+              }
+            }}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className="h-7 w-full text-sm px-2 py-1 justify-start font-normal text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {editValue || "בחר קטגוריה..."}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[140px]">
+              {CATEGORIES.map((cat) => (
+                <DropdownMenuItem
+                  key={cat}
+                  onClick={() => {
+                    onInlineEdit(entry.id, "category", cat);
+                    setEditingField(null);
+                    setEditValue("");
+                    setIsCategoryDropdownOpen(false);
+                  }}
+                  className="justify-end text-sm"
+                >
+                  {cat}
+                </DropdownMenuItem>
+              ))}
+              {entry.category && (
+                <>
+                  <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      onInlineEdit(entry.id, "category", "");
+                      setEditingField(null);
+                      setEditValue("");
+                      setIsCategoryDropdownOpen(false);
+                    }}
+                    className="justify-end text-sm text-slate-400"
+                  >
+                    הסר קטגוריה
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div
+            className={cn(
+              "rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[28px]",
+              onInlineEdit && "cursor-pointer"
+            )}
+            onClick={() => onInlineEdit && startEditing("category", entry.category || "")}
+          >
+            <CategoryChip category={entry.category || undefined} size="sm" />
+          </div>
+        )}
+      </TableCell>
+
       {/* Status */}
-      <TableCell className="py-3">
+      <TableCell className="py-3 px-1">
         <div className="flex items-center gap-2">
           {/* Future gig without status - show nothing */}
           {isFutureGig && !displayStatus ? null : statusConfig ? (
@@ -399,87 +496,116 @@ export const IncomeTableRow = React.memo(function IncomeTableRow({
             </DropdownMenu>
           ) : null}
 
-          {/* Days since invoice badge */}
+          {/* Days since invoice */}
           {daysSinceInvoice !== null && displayStatus === "נשלחה" && (
-            <Badge
+            <span
               className={cn(
-                "text-[9px] px-1.5 py-0 font-medium border-0",
+                "text-[9px] font-medium font-numbers",
                 overdue
-                  ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
-                  : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-amber-600 dark:text-amber-400"
               )}
             >
-              {daysSinceInvoice}
-              <Clock className="h-2.5 w-2.5 mr-1" />
-            </Badge>
+              לפני {daysSinceInvoice} ימים
+            </span>
           )}
         </div>
       </TableCell>
 
       {/* Actions */}
-      <TableCell className="py-3 print:hidden">
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <TableCell className="py-3 pl-1 pr-0 print:hidden">
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {displayStatus === "בוצע" && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMarkInvoiceSent(entry.id);
-              }}
-              title="שלחתי חשבונית"
-            >
-              <FileText className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMarkInvoiceSent(entry.id);
+                  }}
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>שלחתי חשבונית</p>
+              </TooltipContent>
+            </Tooltip>
           )}
           {displayStatus === "נשלחה" && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 rounded-full text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMarkAsPaid(entry.id);
-              }}
-              title="סמן כשולם"
-            >
-              <Check className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 rounded-full text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMarkAsPaid(entry.id);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>סמן כשולם</p>
+              </TooltipContent>
+            </Tooltip>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-            onClick={() => onRowClick(entry)}
-            title="ערוך"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate(entry);
-            }}
-            title="שכפל"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(entry.id);
-            }}
-            title="מחק"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={() => onRowClick(entry)}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>ערוך</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicate(entry);
+                }}
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>שכפל</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(entry.id);
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>מחק</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       </TableCell>
     </TableRow>

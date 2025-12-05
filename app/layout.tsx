@@ -1,8 +1,18 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Heebo, Montserrat } from "next/font/google";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const heebo = Heebo({ 
+  subsets: ["hebrew", "latin"],
+  variable: "--font-heebo",
+});
+
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  variable: "--font-montserrat",
+});
 
 export const metadata: Metadata = {
   title: "SEDER",
@@ -19,7 +29,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="he" dir="rtl">
-      <body className={inter.className}>{children}</body>
+      <body className={`${heebo.variable} ${montserrat.variable} font-sans`}>
+        <TooltipProvider>
+          {children}
+        </TooltipProvider>
+        <Toaster />
+      </body>
     </html>
   );
 }

@@ -1,6 +1,9 @@
 import { Suspense } from "react";
-import { getIncomeEntriesForMonth, getIncomeAggregatesForMonth, getUniqueClients, getMonthPaymentStatuses } from "./data";
+import { getIncomeEntriesForMonth, getIncomeAggregatesForMonth, getUniqueClients, getMonthPaymentStatuses, hasGoogleCalendarConnection } from "./data";
 import IncomePageClient from "./IncomePageClient";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 // Force dynamic rendering - don't pre-render during build
 // This avoids needing DATABASE_URL at build time
@@ -15,7 +18,7 @@ function IncomePageSkeleton() {
         <div className="rounded-2xl bg-white/80 dark:bg-slate-900/80 px-4 py-3 shadow-sm h-16 animate-pulse" />
         
         {/* KPI cards skeleton */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
           {[1, 2, 3, 4].map((i) => (
             <div
               key={i}
@@ -35,16 +38,23 @@ function IncomePageSkeleton() {
 async function IncomePageContent({
   year,
   month,
+  userId,
+  limit,
+  offset,
 }: {
   year: number;
   month: number;
+  userId: string;
+  limit?: number;
+  offset?: number;
 }) {
   // Fetch data in parallel
-  const [entries, aggregates, clients, monthStatuses] = await Promise.all([
-    getIncomeEntriesForMonth({ year, month }),
-    getIncomeAggregatesForMonth({ year, month }),
-    getUniqueClients(),
-    getMonthPaymentStatuses(year),
+  const [entries, aggregates, clients, monthStatuses, isGoogleConnected] = await Promise.all([
+    getIncomeEntriesForMonth({ year, month, userId, limit, offset }),
+    getIncomeAggregatesForMonth({ year, month, userId }),
+    getUniqueClients(userId),
+    getMonthPaymentStatuses(year, userId),
+    hasGoogleCalendarConnection(userId),
   ]);
 
   return (
@@ -55,6 +65,7 @@ async function IncomePageContent({
       aggregates={aggregates}
       clients={clients}
       monthPaymentStatuses={monthStatuses}
+      isGoogleConnected={isGoogleConnected}
     />
   );
 }
@@ -63,8 +74,16 @@ async function IncomePageContent({
 export default async function IncomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{ year?: string; month?: string; page?: string }>;
 }) {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    redirect("/sign-in");
+  }
+
   // Await search params (Next.js 15+ requirement)
   const params = await searchParams;
   
@@ -76,14 +95,24 @@ export default async function IncomePage({
   // Parse year and month from search params, with defaults
   const year = params.year ? parseInt(params.year, 10) : currentYear;
   const month = params.month ? parseInt(params.month, 10) : currentMonth;
+  const pageParam = params.page ? parseInt(params.page, 10) : 1;
 
   // Validate year and month
   const validYear = isNaN(year) || year < 2000 || year > 2100 ? currentYear : year;
   const validMonth = isNaN(month) || month < 1 || month > 12 ? currentMonth : month;
+  const page = isNaN(pageParam) || pageParam < 1 ? 1 : pageParam;
+  const pageSize = 500; // keep current behaviour (effectively first page)
+  const offset = (page - 1) * pageSize;
 
   return (
     <Suspense fallback={<IncomePageSkeleton />}>
-      <IncomePageContent year={validYear} month={validMonth} />
+      <IncomePageContent
+        year={validYear}
+        month={validMonth}
+        userId={session.user.id}
+        limit={pageSize}
+        offset={offset}
+      />
     </Suspense>
   );
 }

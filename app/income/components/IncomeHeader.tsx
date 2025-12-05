@@ -8,12 +8,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Moon, Sun, User, Download, Printer, Upload, CalendarDays, MoreVertical, ChevronDown } from "lucide-react";
-import Link from "next/link";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Moon, Sun, CalendarDays, ChevronDown } from "lucide-react";
 import { MONTH_NAMES } from "../utils";
 import type { MonthPaymentStatus } from "../data";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
+import UserButton from "@/components/auth/user-button";
 
 interface IncomeHeaderProps {
   selectedMonth: number;
@@ -23,9 +28,9 @@ interface IncomeHeaderProps {
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
   onExportCSV: () => void;
-  onPrint: () => void;
   onImportFromCalendar?: () => void;
   monthPaymentStatuses?: Record<number, MonthPaymentStatus>;
+  isGoogleConnected?: boolean;
 }
 
 export function IncomeHeader({
@@ -36,9 +41,9 @@ export function IncomeHeader({
   isDarkMode,
   onToggleDarkMode,
   onExportCSV,
-  onPrint,
   onImportFromCalendar,
   monthPaymentStatuses,
+  isGoogleConnected,
 }: IncomeHeaderProps) {
   const currentYear = new Date().getFullYear();
   const years = [currentYear - 1, currentYear, currentYear + 1];
@@ -63,81 +68,32 @@ export function IncomeHeader({
               </p>
             </div>
           </div>
-
-          {/* Mobile-only: Compact actions dropdown */}
-          <div className="flex items-center gap-1 md:hidden print:hidden">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full h-8 w-8 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-              onClick={onToggleDarkMode}
-            >
-              {isDarkMode ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </Button>
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="rounded-full h-8 w-8 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                {onImportFromCalendar && (
-                  <DropdownMenuItem onClick={onImportFromCalendar}>
-                    <CalendarDays className="h-4 w-4 ml-2" />
-                    ייבא מהיומן
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem asChild>
-                  <Link href="/income/import" className="flex items-center">
-                    <Upload className="h-4 w-4 ml-2" />
-                    ייבוא
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onExportCSV}>
-                  <Download className="h-4 w-4 ml-2" />
-                  ייצוא
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onPrint}>
-                  <Printer className="h-4 w-4 ml-2" />
-                  הדפס
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
         </div>
 
         {/* Row 2 on mobile / Right side on desktop: Controls */}
         <div className="flex items-center justify-between md:justify-end gap-2 sm:gap-3 print:hidden">
           {/* Month/Year Selectors - Always visible */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            <DropdownMenu modal={false}>
+            <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  className="w-[100px] sm:w-[130px] h-8 sm:h-9 text-xs sm:text-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 justify-between px-3 font-normal"
+                  className="w-[100px] sm:w-[130px] h-8 sm:h-9 text-xs sm:text-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 justify-between px-3 font-semibold"
                 >
-                  <span className="flex items-center gap-1.5 sm:gap-2">
+                <span className="flex items-center gap-1.5 sm:gap-2">
                     {MONTH_NAMES[selectedMonth]}
                     {monthPaymentStatuses?.[selectedMonth] &&
                       monthPaymentStatuses[selectedMonth] !== "empty" && (
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full shrink-0",
-                            monthPaymentStatuses[selectedMonth] === "all-paid"
-                              ? "bg-emerald-500"
-                              : "bg-red-500"
-                          )}
-                        />
+                    <span
+                      className={cn(
+                        "h-2 w-2 rounded-full shrink-0",
+                        monthPaymentStatuses[selectedMonth] === "all-paid"
+                          ? "bg-emerald-500"
+                          : "bg-red-500"
                       )}
-                  </span>
+                    />
+                  )}
+                </span>
                   <ChevronDown className="h-4 w-4 opacity-50" />
                 </Button>
               </DropdownMenuTrigger>
@@ -175,11 +131,11 @@ export function IncomeHeader({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu modal={false}>
+            <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  className="w-[70px] sm:w-[90px] h-8 sm:h-9 text-xs sm:text-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 justify-between px-3 font-normal"
+                  className="w-[70px] sm:w-[90px] h-8 sm:h-9 text-xs sm:text-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 justify-between px-3 font-semibold font-numbers"
                 >
                   {selectedYear}
                   <ChevronDown className="h-4 w-4 opacity-50" />
@@ -187,7 +143,7 @@ export function IncomeHeader({
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 {years.map((year) => (
-                  <DropdownMenuItem key={year} onClick={() => onYearChange(year)} className="justify-end">
+                  <DropdownMenuItem key={year} onClick={() => onYearChange(year)} className="justify-end font-numbers font-medium">
                     {year}
                   </DropdownMenuItem>
                 ))}
@@ -195,45 +151,35 @@ export function IncomeHeader({
             </DropdownMenu>
           </div>
 
-          {/* Desktop-only: Import/Export/Print Buttons */}
-          <div className="hidden md:flex items-center gap-1">
-            <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
-            {/* Calendar Import Button */}
+          {/* Controls: Calendar, Dark mode, User */}
+          <div className="flex items-center gap-1">
             {onImportFromCalendar && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={!isGoogleConnected ? 0 : undefined} className="inline-block">
               <Button
                 variant="ghost"
-                size="icon"
+                      size="icon"
                 onClick={onImportFromCalendar}
-                className="h-9 w-9 rounded-full text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-900/30"
-                title="ייבא מהיומן"
+                      disabled={!isGoogleConnected}
+                      className={cn(
+                        "h-9 w-9 rounded-full",
+                        isGoogleConnected
+                          ? "text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-900/30"
+                          : "text-slate-300 dark:text-slate-600"
+                      )}
               >
-                <CalendarDays className="h-4 w-4" />
+                      <CalendarDays className="h-4 w-4" />
               </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isGoogleConnected ? "ייבא מהיומן" : "עליך להתחבר לחשבון Google כדי לייבא מהיומן"}</p>
+                </TooltipContent>
+              </Tooltip>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              asChild
-              className="h-9 w-9 rounded-full text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:text-emerald-300 dark:hover:bg-emerald-900/30"
-              title="ייבוא"
-            >
-              <Link href="/income/import">
-                <Upload className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onExportCSV}
-              className="h-9 w-9 rounded-full text-slate-600 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800"
-              title="ייצוא"
-            >
-              <Download className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {/* Desktop-only: Dark mode + User */}
-          <div className="hidden md:flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
@@ -246,6 +192,14 @@ export function IncomeHeader({
                 <Moon className="h-4 w-4" />
               )}
             </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{isDarkMode ? "מצב יום" : "מצב לילה"}</p>
+              </TooltipContent>
+            </Tooltip>
+            <UserButton 
+              onExportCSV={onExportCSV}
+            />
           </div>
         </div>
       </div>

@@ -53,13 +53,11 @@ export const DISPLAY_STATUSES: DisplayStatus[] = ["בוצע", "נשלחה", "ש�
 /**
  * Check if a transition from one status to another is valid
  */
-export function isValidStatusTransition(
-  from: DisplayStatus | null,
-  to: DisplayStatus
-): boolean {
+export function isValidStatusTransition(): boolean {
   // Can always transition to any status (supports reverting)
   return true;
 }
+
 
 
 

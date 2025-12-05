@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,148 +9,154 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { Search, X, LayoutGrid, FileText, Clock, CheckCircle, ChevronDown } from "lucide-react";
-import { FilterType } from "../types";
+import { Search, X, ChevronDown, Plus, Filter } from "lucide-react";
+import { CATEGORIES } from "../types";
+import { CategoryChip } from "./CategoryChip";
+import { ViewModeToggle, type ViewMode } from "./ViewModeToggle";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 interface IncomeFiltersProps {
-  activeFilter: FilterType;
-  onFilterChange: (filter: FilterType) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   clients: string[];
   selectedClient: string;
   onClientChange: (client: string) => void;
-  readyToInvoiceCount: number;
-  overdueCount: number;
-}
-
-// Reusable filter buttons component
-function FilterButtons({
-  activeFilter,
-  onFilterChange,
-  readyToInvoiceCount,
-  overdueCount,
-}: {
-  activeFilter: FilterType;
-  onFilterChange: (filter: FilterType) => void;
-  readyToInvoiceCount: number;
-  overdueCount: number;
-}) {
-  return (
-    <div className="flex items-center gap-1 p-1 bg-white dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm">
-      {/* All */}
-      <button
-        onClick={() => onFilterChange("all")}
-        title="הכל"
-        className={cn(
-          "h-8 w-8 rounded-full flex items-center justify-center transition-all",
-          activeFilter === "all"
-            ? "bg-slate-800 dark:bg-slate-200"
-            : "hover:bg-slate-100 dark:hover:bg-slate-700"
-        )}
-      >
-        <LayoutGrid
-          className={cn(
-            "h-4 w-4",
-            activeFilter === "all"
-              ? "text-white dark:text-slate-800"
-              : "text-slate-600 dark:text-slate-400"
-          )}
-        />
-      </button>
-
-      {/* Ready to Invoice */}
-      <button
-        onClick={() => onFilterChange("ready-to-invoice")}
-        title="לחשבונית"
-        className={cn(
-          "h-8 w-8 rounded-full flex items-center justify-center transition-all relative",
-          activeFilter === "ready-to-invoice"
-            ? "bg-sky-100 dark:bg-sky-900/50"
-            : "hover:bg-slate-100 dark:hover:bg-slate-700"
-        )}
-      >
-        <FileText
-          className={cn(
-            "h-4 w-4",
-            activeFilter === "ready-to-invoice"
-              ? "text-sky-600 dark:text-sky-400"
-              : "text-sky-400 dark:text-sky-500"
-          )}
-        />
-        {readyToInvoiceCount > 0 && (
-          <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-sky-500 text-white">
-            {readyToInvoiceCount}
-          </span>
-        )}
-      </button>
-
-      {/* Invoiced / Waiting */}
-      <button
-        onClick={() => onFilterChange("invoiced")}
-        title="ממתין לתשלום"
-        className={cn(
-          "h-8 w-8 rounded-full flex items-center justify-center transition-all relative",
-          activeFilter === "invoiced"
-            ? "bg-orange-100 dark:bg-orange-900/50"
-            : "hover:bg-slate-100 dark:hover:bg-slate-700"
-        )}
-      >
-        <Clock
-          className={cn(
-            "h-4 w-4",
-            activeFilter === "invoiced"
-              ? "text-orange-500 dark:text-orange-400"
-              : "text-orange-400 dark:text-orange-500"
-          )}
-        />
-        {overdueCount > 0 && (
-          <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-red-500 text-white">
-            {overdueCount}
-          </span>
-        )}
-      </button>
-
-      {/* Paid */}
-      <button
-        onClick={() => onFilterChange("paid")}
-        title="שולם"
-        className={cn(
-          "h-8 w-8 rounded-full flex items-center justify-center transition-all",
-          activeFilter === "paid"
-            ? "bg-green-100 dark:bg-green-900/50"
-            : "hover:bg-slate-100 dark:hover:bg-slate-700"
-        )}
-      >
-        <CheckCircle
-          className={cn(
-            "h-4 w-4",
-            activeFilter === "paid"
-              ? "text-green-500 dark:text-green-400"
-              : "text-green-400 dark:text-green-500"
-          )}
-        />
-      </button>
-    </div>
-  );
+  selectedCategories: string[];
+  onCategoryChange: (categories: string[]) => void;
+  onNewEntry?: () => void;
+  // View mode toggle
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 export function IncomeFilters({
-  activeFilter,
-  onFilterChange,
   searchQuery,
   onSearchChange,
   clients,
   selectedClient,
   onClientChange,
-  readyToInvoiceCount,
-  overdueCount,
+  selectedCategories,
+  onCategoryChange,
+  onNewEntry,
+  viewMode,
+  onViewModeChange,
 }: IncomeFiltersProps) {
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = React.useState(false);
+
+  const toggleCategory = (category: string) => {
+    if (selectedCategories.includes(category)) {
+      onCategoryChange(selectedCategories.filter((c) => c !== category));
+    } else {
+      onCategoryChange([...selectedCategories, category]);
+    }
+  };
+
+  const hasCategoryFilter = selectedCategories.length > 0;
+
+  const renderCategoryRow = () => (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className="text-xs text-slate-500 dark:text-slate-400 ml-1">
+        קטגוריות:
+      </span>
+      {CATEGORIES.map((category) => {
+        const isActive = selectedCategories.includes(category);
+        return (
+          <button
+            key={category}
+            type="button"
+            onClick={() => toggleCategory(category)}
+            className={cn(
+              "transition-all px-1.5 py-0.5 rounded-full focus:outline-none focus-visible:ring-0",
+              isActive ? "bg-slate-100 dark:bg-slate-800/70" : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+            )}
+          >
+            <CategoryChip
+              category={category}
+              size="sm"
+              className={cn(
+                "cursor-pointer",
+                !isActive && "opacity-80 hover:opacity-100"
+              )}
+            />
+          </button>
+        );
+      })}
+      {hasCategoryFilter && (
+        <button
+          onClick={() => onCategoryChange([])}
+          className="text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 underline decoration-dotted"
+        >
+          נקה קטגוריות
+        </button>
+      )}
+    </div>
+  );
+
+  const renderActiveBadges = () => {
+    const hasFilters =
+      selectedClient !== "all" ||
+      selectedCategories.length > 0 ||
+      searchQuery.trim() !== "";
+
+    if (!hasFilters) return null;
+
+    return (
+      <div className="flex flex-wrap items-center gap-1 text-[11px] mt-1">
+        {searchQuery && (
+          <BadgeButton
+            label={`חיפוש: ${searchQuery}`}
+            onClear={() => onSearchChange("")}
+          />
+        )}
+        {selectedClient !== "all" && (
+          <BadgeButton label={`לקוח: ${selectedClient}`} onClear={() => onClientChange("all")} />
+        )}
+        {selectedCategories.map((category) => (
+          <BadgeButton
+            key={category}
+            label={category}
+            onClear={() => toggleCategory(category)}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="print:hidden">
       {/* Mobile: Compact search + filters button */}
-      <div className="flex md:hidden items-center gap-2">
+      <div className="md:hidden flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+        {/* Add Button (Mobile) */}
+        {onNewEntry && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="default"
+                size="icon"
+                onClick={onNewEntry}
+                className="h-9 w-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white shrink-0"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>עבודה חדשה</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Search - takes up available space */}
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -169,19 +176,45 @@ export function IncomeFilters({
           )}
         </div>
 
-        {/* Filter buttons - always visible on mobile for quick access */}
-        <FilterButtons
-          activeFilter={activeFilter}
-          onFilterChange={onFilterChange}
-          readyToInvoiceCount={readyToInvoiceCount}
-          overdueCount={overdueCount}
-        />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setIsFilterSheetOpen(true)}
+            className="h-9 w-9 border-slate-200 dark:border-slate-700"
+          >
+            <Filter className="h-4 w-4" />
+          </Button>
+        </div>
+
+
+        {renderActiveBadges()}
       </div>
+
+      {/* Category filter - shared for mobile + desktop */}
 
       {/* Desktop: Full inline filters */}
       <div className="hidden md:flex items-center justify-between gap-4">
-        {/* Left side: Search + Client Filter */}
+        {/* Left side: Search + Add Button + Client Filter */}
         <div className="flex items-center gap-2 flex-1">
+          {/* Add Button (Desktop) */}
+          {onNewEntry && (
+             <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="default"
+                  size="icon"
+                  onClick={onNewEntry}
+                  className="h-9 w-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white shrink-0"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>עבודה חדשה</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+
           {/* Search */}
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -203,7 +236,7 @@ export function IncomeFilters({
 
           {/* Client Filter - Only shows clients from current month */}
           {clients.length > 0 && (
-            <DropdownMenu modal={false}>
+            <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
@@ -237,15 +270,116 @@ export function IncomeFilters({
           )}
         </div>
 
-        {/* Right side: Filter Buttons */}
-        <FilterButtons
-          activeFilter={activeFilter}
-          onFilterChange={onFilterChange}
-          readyToInvoiceCount={readyToInvoiceCount}
-          overdueCount={overdueCount}
+        {/* Right side: View Mode Toggle */}
+        <ViewModeToggle
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
         />
       </div>
+      {/* Desktop category row under search section */}
+      <div className="hidden md:block">
+        {renderCategoryRow()}
+      </div>
+
+      {/* Mobile filter sheet */}
+      <Sheet open={isFilterSheetOpen} onOpenChange={setIsFilterSheetOpen}>
+        <SheetContent side="bottom" className="p-4 space-y-4">
+          <SheetHeader>
+            <SheetTitle>סינון</SheetTitle>
+          </SheetHeader>
+
+          {/* Client Filter */}
+          {clients.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400">לקוח</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={selectedClient === "all" ? "default" : "outline"}
+                  onClick={() => onClientChange("all")}
+                  className="h-9 px-3"
+                >
+                  כל הלקוחות
+                </Button>
+                {clients
+                  .filter((client) => client && client.trim() !== "")
+                  .slice(0, 12)
+                  .map((client) => (
+                    <Button
+                      key={client}
+                      variant={selectedClient === client ? "default" : "outline"}
+                      onClick={() => onClientChange(client)}
+                      className="h-9 px-3"
+                    >
+                      {client}
+                    </Button>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* Categories - mirror web chips style */}
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 dark:text-slate-400 text-right">קטגוריות</p>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              {CATEGORIES.map((category) => {
+                const isActive = selectedCategories.includes(category);
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => toggleCategory(category)}
+                    className={cn(
+                      "transition-all px-1.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none focus-visible:ring-0",
+                      isActive
+                        ? "ring-1 ring-slate-300 dark:ring-slate-600"
+                        : "hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                    )}
+                  >
+                    <CategoryChip
+                      category={category}
+                      size="sm"
+                      className={cn(
+                        "cursor-pointer",
+                        !isActive && "opacity-80 hover:opacity-100"
+                      )}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+            {selectedCategories.length > 0 && (
+              <button
+                onClick={() => onCategoryChange([])}
+                className="text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 underline decoration-dotted"
+              >
+                נקה קטגוריות
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setIsFilterSheetOpen(false)}>
+              סגור
+            </Button>
+            <Button onClick={() => setIsFilterSheetOpen(false)} className="bg-slate-900 text-white hover:bg-slate-800">
+              החל
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
+  );
+}
+
+function BadgeButton({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <button
+      onClick={onClear}
+      className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+    >
+      <span>{label}</span>
+      <X className="h-3 w-3" />
+    </button>
   );
 }
 

@@ -4,16 +4,15 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { IncomeHeader } from "./components/IncomeHeader";
 import { KPICards } from "./components/KPICards";
-import { IncomeFilters } from "./components/IncomeFilters";
 import { IncomeTable } from "./components/IncomeTable";
 import { IncomeDetailDialog } from "./components/IncomeDetailDialog";
 import { CalendarImportDialog } from "./components/CalendarImportDialog";
-import { exportToCSV, isOverdue, getDisplayStatus, calculateKPIs, mapStatusToDb, mapVatTypeToDb, getVatTypeFromEntry } from "./utils";
+import { IncomeFilters } from "./components/IncomeFilters";
+import type { ViewMode } from "./components/ViewModeToggle";
+import { exportToCSV, isOverdue, getDisplayStatus, calculateKPIs, mapStatusToDb, mapVatTypeToDb, getVatTypeFromEntry, formatCurrency, formatFullDate, getTodayDateString } from "./utils";
 import {
   createIncomeEntryAction,
   updateIncomeEntryAction,
-  markIncomeEntryAsPaidAction,
-  markInvoiceSentAction,
   updateEntryStatusAction,
   deleteIncomeEntryAction,
   importFromCalendarAction,
@@ -21,6 +20,37 @@ import {
 import type { IncomeEntry, DisplayStatus, FilterType, KPIData } from "./types";
 import type { IncomeAggregates, MonthPaymentStatus } from "./data";
 import type { IncomeEntry as DBIncomeEntry } from "@/db/schema";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import { Plus } from "lucide-react";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View Mode localStorage key and helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const VIEW_MODE_STORAGE_KEY = "seder_income_view_mode";
+
+function getDefaultViewMode(): ViewMode {
+  // Default based on screen width - cards for mobile, list for desktop
+  if (typeof window !== "undefined") {
+    return window.innerWidth < 768 ? "cards" : "list";
+  }
+  return "list"; // SSR fallback
+}
+
+function getStoredViewMode(): ViewMode | null {
+  if (typeof window === "undefined") return null;
+  const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  if (stored === "list" || stored === "cards") {
+    return stored;
+  }
+  return null;
+}
+
+function setStoredViewMode(mode: ViewMode): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props interface
@@ -33,13 +63,14 @@ interface IncomePageClientProps {
   aggregates: IncomeAggregates;
   clients: string[];
   monthPaymentStatuses: Record<number, MonthPaymentStatus>;
+  isGoogleConnected: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper to convert DB entry to UI entry format
 // ─────────────────────────────────────────────────────────────────────────────
 
-function dbEntryToUIEntry(dbEntry: DBIncomeEntry): IncomeEntry {
+export function dbEntryToUIEntry(dbEntry: DBIncomeEntry): IncomeEntry {
   return {
     id: dbEntry.id,
     date: dbEntry.date,
@@ -72,6 +103,7 @@ export default function IncomePageClient({
   aggregates,
   clients: initialClients,
   monthPaymentStatuses,
+  isGoogleConnected,
 }: IncomePageClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -82,6 +114,15 @@ export default function IncomePageClient({
     [dbEntries]
   );
 
+  const defaultNewEntryDate = React.useMemo(() => {
+    const todayString = getTodayDateString();
+    const today = new Date(todayString);
+    if (today.getFullYear() === year && today.getMonth() + 1 === month) {
+      return todayString;
+    }
+    return `${year}-${String(month).padStart(2, "0")}-01`;
+  }, [month, year]);
+
   // Local state for entries (for optimistic updates)
   const [entries, setEntries] = React.useState<IncomeEntry[]>(initialEntries);
 
@@ -90,7 +131,33 @@ export default function IncomePageClient({
     setEntries(dbEntries.map(dbEntryToUIEntry));
     // Reset client filter when month changes (selected client may not exist in new month)
     setSelectedClient("all");
+    setSelectedCategories([]);
   }, [dbEntries]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // View Mode State with localStorage persistence
+  // - Defaults: Desktop (md+) → "list", Mobile (sm-) → "cards"
+  // - User choice persisted in localStorage and restored on mount
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Important: start with a deterministic SSR-safe default to avoid hydration mismatches.
+  // We defer reading window width/localStorage until after mount.
+  const [viewMode, setViewMode] = React.useState<ViewMode>("list");
+  
+  // On mount, restore user's saved view mode preference from localStorage or screen width
+  React.useEffect(() => {
+    const storedMode = getStoredViewMode();
+    if (storedMode) {
+      setViewMode(storedMode);
+      return;
+    }
+    setViewMode(getDefaultViewMode());
+  }, []);
+
+  // Handler to change view mode and persist to localStorage
+  const handleViewModeChange = React.useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    setStoredViewMode(mode);
+  }, []);
 
   // Dark mode state
   const [isDarkMode, setIsDarkMode] = React.useState(false);
@@ -102,16 +169,19 @@ export default function IncomePageClient({
   const [activeFilter, setActiveFilter] = React.useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedClient, setSelectedClient] = React.useState<string>("all");
+  const [selectedCategories, setSelectedCategories] = React.useState<string[]>([]);
   const [sortDirection, setSortDirection] = React.useState<"asc" | "desc">("asc");
 
   // Dialog state
   const [selectedEntry, setSelectedEntry] = React.useState<IncomeEntry | null>(null);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [initialFocusField, setInitialFocusField] = React.useState<"description" | "amount" | "clientName" | undefined>();
 
   // Dialog handlers (defined early for use in effects)
   const closeDialog = React.useCallback(() => {
     setIsDialogOpen(false);
     setSelectedEntry(null);
+    setInitialFocusField(undefined);
   }, []);
 
   // Get unique clients from current month's entries only
@@ -174,6 +244,13 @@ export default function IncomePageClient({
       result = result.filter((e) => e.clientName === selectedClient);
     }
 
+    // Category filter
+    if (selectedCategories.length > 0) {
+      result = result.filter(
+        (e) => e.category && selectedCategories.includes(e.category)
+      );
+    }
+
     // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -185,13 +262,82 @@ export default function IncomePageClient({
       );
     }
 
-    // Sort by date
-    return result.sort((a, b) => {
+    // Sort by date without mutating the source array
+    return [...result].sort((a, b) => {
       const dateA = new Date(a.date).getTime();
       const dateB = new Date(b.date).getTime();
       return sortDirection === "desc" ? dateB - dateA : dateA - dateB;
     });
-  }, [entries, activeFilter, selectedClient, searchQuery, sortDirection]);
+  }, [entries, activeFilter, selectedClient, selectedCategories, searchQuery, sortDirection]);
+
+  const mobileTotals = React.useMemo(() => {
+    return filteredEntries.reduce(
+      (acc, entry) => {
+        const status = getDisplayStatus(entry);
+        acc.totalGross += entry.amountGross;
+        if (status === "שולם") {
+          acc.paidSum += entry.amountPaid;
+        } else if (status === "נשלחה") {
+          acc.waitingSum += entry.amountGross - entry.amountPaid;
+        } else {
+          acc.toInvoiceSum += entry.amountGross;
+        }
+        return acc;
+      },
+      { totalGross: 0, paidSum: 0, waitingSum: 0, toInvoiceSum: 0 }
+    );
+  }, [filteredEntries]);
+
+  // Client summary derived from currently visible set
+  const clientSummary = React.useMemo(() => {
+    if (selectedClient === "all") return null;
+    const clientEntries = filteredEntries.filter(
+      (e) => e.clientName === selectedClient
+    );
+    const totalMonth = clientEntries.reduce(
+      (sum, e) => sum + e.amountGross,
+      0
+    );
+    const statusBuckets = clientEntries.reduce(
+      (acc, entry) => {
+        const status = getDisplayStatus(entry);
+        if (status === "שולם") {
+          acc.paidSum += entry.amountPaid;
+          acc.paidCount += 1;
+        } else if (status === "נשלחה") {
+          acc.waitingSum += entry.amountGross - entry.amountPaid;
+          acc.waitingCount += 1;
+        } else {
+          acc.toInvoiceSum += entry.amountGross;
+          acc.toInvoiceCount += 1;
+        }
+        const time = new Date(entry.date).getTime();
+        if (!acc.latestDate || time > acc.latestDate.time) {
+          acc.latestDate = { time, date: entry.date };
+        }
+        return acc;
+      },
+      {
+        paidSum: 0,
+        waitingSum: 0,
+        toInvoiceSum: 0,
+        paidCount: 0,
+        waitingCount: 0,
+        toInvoiceCount: 0,
+        latestDate: null as null | { time: number; date: string },
+      }
+    );
+
+    return {
+      totalMonth,
+      // We only have current-month entries loaded; reuse for yearly/all-time view
+      totalYear: totalMonth,
+      latestDateLabel: statusBuckets.latestDate
+        ? formatFullDate(statusBuckets.latestDate.date)
+        : "—",
+      ...statusBuckets,
+    };
+  }, [filteredEntries, selectedClient]);
 
   // Dark mode effect
   React.useEffect(() => {
@@ -236,7 +382,8 @@ export default function IncomePageClient({
   // CRUD handlers with server actions
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const addEntry = React.useCallback(async (entry: Omit<IncomeEntry, "id" | "weekday" | "invoiceStatus" | "paymentStatus" | "vatRate" | "includesVat"> & { status?: DisplayStatus, vatType?: "חייב מע״מ" | "ללא מע״מ" | "כולל מע״מ" }) => {
+  const addEntry = React.useCallback(async (entry: Omit<IncomeEntry, "id" | "weekday" | "invoiceStatus" | "paymentStatus" | "vatRate" | "includesVat"> & { status?: DisplayStatus, vatType?: "חייב מע״מ" | "ללא מע״מ" | "כולל מע״מ", invoiceStatus?: "draft" | "sent" | "paid" | "cancelled", paymentStatus?: "unpaid" | "partial" | "paid", vatRate?: number, includesVat?: boolean }) => {
+    try {
     const formData = new FormData();
     formData.append("date", entry.date);
     formData.append("description", entry.description);
@@ -260,6 +407,7 @@ export default function IncomePageClient({
       formData.append("includesVat", vatMapping.includesVat);
     } else {
       formData.append("includesVat", "false");
+      formData.append("vatRate", "18");
     }
 
     const result = await createIncomeEntryAction(formData);
@@ -268,10 +416,19 @@ export default function IncomePageClient({
       // Optimistically add to local state
       const newEntry = dbEntryToUIEntry(result.entry);
       setEntries((prev) => [newEntry, ...prev]);
+        toast.success("העבודה נשמרה");
+    } else {
+      console.error("Failed to create entry:", result.error);
+        toast.error("לא הצלחנו לשמור, נסה שוב.");
+      }
+    } catch (error) {
+      console.error("Failed to create entry:", error);
+      toast.error("לא הצלחנו לשמור, נסה שוב.");
     }
   }, []);
 
   const updateEntry = React.useCallback(async (updatedEntry: IncomeEntry & { status?: DisplayStatus, vatType?: "חייב מע״מ" | "ללא מע״מ" | "כולל מע״מ" }) => {
+    try {
     const formData = new FormData();
     formData.append("id", updatedEntry.id.toString());
     formData.append("date", updatedEntry.date);
@@ -324,28 +481,16 @@ export default function IncomePageClient({
     );
 
     await updateIncomeEntryAction(formData);
+      toast.success("העבודה עודכנה");
+    } catch (error) {
+      console.error("Failed to update entry:", error);
+      toast.error("לא הצלחנו לעדכן, נסה שוב.");
+    }
   }, []);
 
   const deleteEntry = React.useCallback(async (id: string) => {
-    // Optimistically update local state
     setEntries((prev) => prev.filter((e) => e.id !== id));
     setSelectedEntry((prev) => (prev?.id === id ? null : prev));
-    
-    // We can't easily access isDialogOpen here without dependency, 
-    // but we can close it if the deleted entry was selected.
-    // However, we can't see selectedEntry value inside callback if we don't add it to deps.
-    // Instead, we'll just ensure the dialog closes if we were viewing this entry.
-    // The Effect in the component body handles Escape key, but for this specific case:
-    // We'll just close dialog unconditionally if it was open, or let the user close it.
-    // Actually, let's use a functional update on isDialogOpen or just ignore it here 
-    // since setting selectedEntry to null will likely handle the UI state gracefully 
-    // (IncomeDetailDialog checks for entry).
-    
-    // Wait, original code:
-    // if (selectedEntry?.id === id) { setIsDialogOpen(false); }
-    // We can replicate this if we include selectedEntry in deps, but that breaks stability.
-    // Better approach: rely on setSelectedEntry(null) and the dialog handling null entry.
-    
     await deleteIncomeEntryAction(id);
   }, []);
 
@@ -384,8 +529,19 @@ export default function IncomePageClient({
       })
     );
 
-    // Call server action for all status changes
+    try {
     await updateEntryStatusAction(id, status);
+      const successMessage =
+        status === "שולם"
+          ? "סומן כ־שולם"
+          : status === "נשלחה"
+            ? "סומן כ־נשלחה חשבונית"
+            : "הסטטוס עודכן";
+      toast.success(successMessage);
+    } catch (error) {
+      console.error("Failed to update status:", error);
+      toast.error("לא הצלחנו לעדכן סטטוס, נסה שוב.");
+    }
   }, []);
 
   const markAsPaid = React.useCallback(async (id: string) => {
@@ -397,11 +553,11 @@ export default function IncomePageClient({
   }, [updateStatus]);
 
   const duplicateEntry = React.useCallback(async (entry: IncomeEntry) => {
-    const today = new Date();
+    const defaultDate = defaultNewEntryDate ? new Date(defaultNewEntryDate) : new Date();
     // Construct a new entry for duplication
     // We need to match the expected structure for `addEntry`
     const newEntry = {
-      date: today.toISOString().split("T")[0],
+      date: defaultDate.toISOString().split("T")[0],
       description: entry.description,
       clientName: entry.clientName,
       amountGross: entry.amountGross,
@@ -412,7 +568,7 @@ export default function IncomePageClient({
       vatType: getVatTypeFromEntry(entry)
     };
     await addEntry(newEntry);
-  }, [addEntry]);
+  }, [addEntry, defaultNewEntryDate]);
 
   const inlineEditEntry = React.useCallback(async (id: string, field: string, value: string | number) => {
     // Optimistically update local state
@@ -441,6 +597,13 @@ export default function IncomePageClient({
 
   const openDialog = (entry: IncomeEntry) => {
     setSelectedEntry(entry);
+    setInitialFocusField(undefined);
+    setIsDialogOpen(true);
+  };
+
+  const openNewEntryDialog = () => {
+    setSelectedEntry(null);
+    setInitialFocusField("description");
     setIsDialogOpen(true);
   };
 
@@ -453,10 +616,6 @@ export default function IncomePageClient({
       filteredEntries,
       `income-${year}-${String(month).padStart(2, "0")}.csv`
     );
-  };
-
-  const handlePrint = () => {
-    window.print();
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -487,7 +646,7 @@ export default function IncomePageClient({
       className="min-h-screen paper-texture print:bg-white"
       dir="rtl"
     >
-      <div className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-3 sm:space-y-4 md:space-y-6">
+      <div className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 pb-28 space-y-3 sm:space-y-4 md:space-y-6 md:pb-8">
         {/* Header */}
         <IncomeHeader
           selectedMonth={month}
@@ -497,9 +656,9 @@ export default function IncomePageClient({
           isDarkMode={isDarkMode}
           onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
           onExportCSV={handleExportCSV}
-          onPrint={handlePrint}
           onImportFromCalendar={openCalendarImportDialog}
           monthPaymentStatuses={monthPaymentStatuses}
+          isGoogleConnected={isGoogleConnected}
         />
 
         {/* KPI Cards */}
@@ -510,23 +669,86 @@ export default function IncomePageClient({
           activeFilter={activeFilter}
         />
 
-        {/* Filters */}
-        <IncomeFilters
-          activeFilter={activeFilter}
-          onFilterChange={setActiveFilter}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          clients={monthClients}
-          selectedClient={selectedClient}
-          onClientChange={setSelectedClient}
-          readyToInvoiceCount={kpis.readyToInvoiceCount}
-          overdueCount={kpis.overdueCount}
-        />
+        {/* Mobile sticky filters with view toggle */}
+        <div className="md:hidden sticky top-0 z-30 -mx-3 px-3 pb-2 pt-1 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur border-b border-slate-200/70 dark:border-slate-800/70">
+          <IncomeFilters
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            clients={monthClients}
+            selectedClient={selectedClient}
+            onClientChange={setSelectedClient}
+            selectedCategories={selectedCategories}
+            onCategoryChange={setSelectedCategories}
+            onNewEntry={openNewEntryDialog}
+            viewMode={viewMode}
+            onViewModeChange={handleViewModeChange}
+          />
+        </div>
 
-        {/* Main Table */}
+        {/* Client summary (when a specific client is selected) */}
+        {clientSummary && (
+          <Card className="bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm">
+            <div className="p-3 sm:p-4 grid gap-3 sm:gap-4 sm:grid-cols-5 items-start sm:items-center text-right">
+              <div className="space-y-0.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400">סיכום לקוח</p>
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {selectedClient}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  עבודה אחרונה: {clientSummary.latestDateLabel}
+                </p>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  סה״כ החודש
+                </span>
+                <span className="text-sm font-bold text-slate-800 dark:text-slate-100" dir="ltr">
+                  {formatCurrency(clientSummary.totalMonth)}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  סה״כ השנה
+                </span>
+                <span className="text-sm font-bold text-slate-400 dark:text-slate-500">
+                  בקרוב
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  סטטוסים
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800">
+                    {clientSummary.paidCount} שולם
+                  </Badge>
+                  <Badge className="bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800">
+                    {clientSummary.waitingCount} מחכה
+                  </Badge>
+                  <Badge className="bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800/40 dark:text-slate-200 dark:border-slate-700">
+                    {clientSummary.toInvoiceCount} לשלוח
+                  </Badge>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  פירוט סכומים
+                </span>
+                <div className="flex flex-col text-[11px] leading-tight text-slate-600 dark:text-slate-300" dir="ltr">
+                  <span>✓ {formatCurrency(clientSummary.paidSum)}</span>
+                  <span>⌛ {formatCurrency(clientSummary.waitingSum)}</span>
+                  <span>📝 {formatCurrency(clientSummary.toInvoiceSum)}</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Main Table/Cards View */}
         <IncomeTable
           entries={filteredEntries}
           clients={allClients}
+          defaultDate={defaultNewEntryDate}
           onRowClick={openDialog}
           onStatusChange={updateStatus}
           onMarkAsPaid={markAsPaid}
@@ -539,10 +761,28 @@ export default function IncomePageClient({
             setActiveFilter("all");
             setSelectedClient("all");
             setSearchQuery("");
+            setSelectedCategories([]);
           }}
-          hasActiveFilter={activeFilter !== "all" || searchQuery !== "" || selectedClient !== "all"}
+          hasActiveFilter={
+            activeFilter !== "all" ||
+            searchQuery !== "" ||
+            selectedClient !== "all" ||
+            selectedCategories.length > 0
+          }
           sortDirection={sortDirection}
           onSortToggle={() => setSortDirection(sortDirection === "desc" ? "asc" : "desc")}
+          // Filter/search props
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          monthClients={monthClients}
+          selectedClient={selectedClient}
+          onClientChange={setSelectedClient}
+          selectedCategories={selectedCategories}
+          onCategoryChange={setSelectedCategories}
+          onNewEntry={openNewEntryDialog}
+          // View mode props
+          viewMode={viewMode}
+          onViewModeChange={handleViewModeChange}
         />
 
         {/* Keyboard shortcuts hint - hidden on mobile */}
@@ -564,6 +804,16 @@ export default function IncomePageClient({
         </div>
       </div>
 
+      <FloatingActionButton onClick={openNewEntryDialog} />
+      {filteredEntries.length > 0 && (
+        <MobileTotalsBar
+          totalGross={mobileTotals.totalGross}
+          paidSum={mobileTotals.paidSum}
+          waitingSum={mobileTotals.waitingSum}
+          toInvoiceSum={mobileTotals.toInvoiceSum}
+        />
+      )}
+
       {/* Detail Dialog */}
       <IncomeDetailDialog
         entry={selectedEntry}
@@ -572,7 +822,9 @@ export default function IncomePageClient({
         onMarkAsPaid={markAsPaid}
         onMarkInvoiceSent={markInvoiceSent}
         onUpdate={updateEntry}
-        onStatusChange={updateStatus}
+        onAdd={addEntry}
+        defaultDateForNew={defaultNewEntryDate}
+        initialFocusField={initialFocusField}
       />
 
       {/* Calendar Import Dialog */}
@@ -583,6 +835,64 @@ export default function IncomePageClient({
         defaultYear={year}
         defaultMonth={month}
       />
+    </div>
+  );
+}
+
+function FloatingActionButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="md:hidden print:hidden fixed bottom-24 right-4 z-40 flex flex-col items-center gap-1">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="עבודה חדשה"
+        className="h-14 w-14 rounded-full bg-emerald-500 text-white shadow-xl shadow-emerald-500/30 hover:bg-emerald-600 active:scale-95 transition-transform flex items-center justify-center"
+      >
+        <Plus className="h-6 w-6" />
+      </button>
+      <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+        עבודה חדשה
+      </span>
+    </div>
+  );
+}
+
+function MobileTotalsBar({
+  totalGross,
+  paidSum,
+  waitingSum,
+  toInvoiceSum,
+}: {
+  totalGross: number;
+  paidSum: number;
+  waitingSum: number;
+  toInvoiceSum: number;
+}) {
+  const pending = waitingSum + toInvoiceSum;
+  return (
+    <div className="md:hidden print:hidden fixed bottom-0 left-0 right-0 z-30 px-3 pb-4">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur shadow-lg shadow-slate-900/5">
+        <div className="grid grid-cols-3 px-4 py-3 text-center gap-3">
+          <div className="flex flex-col items-center">
+            <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">סה״כ</span>
+            <span className="text-lg font-bold text-slate-900 dark:text-slate-50 font-numbers" dir="ltr">
+              {formatCurrency(totalGross)}
+            </span>
+          </div>
+          <div className="flex flex-col items-center">
+            <span className="text-sm text-emerald-600 dark:text-emerald-300 font-medium">שולם</span>
+            <span className="text-lg font-bold text-emerald-600 dark:text-emerald-300 font-numbers" dir="ltr">
+              {formatCurrency(paidSum)}
+            </span>
+          </div>
+          <div className="flex flex-col items-center">
+            <span className="text-sm text-orange-600 dark:text-orange-300 font-medium">ממתין</span>
+            <span className="text-lg font-bold text-orange-600 dark:text-orange-300 font-numbers" dir="ltr">
+              {formatCurrency(pending)}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

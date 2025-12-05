@@ -1,6 +1,5 @@
 import { IncomeEntry, KPIData, DisplayStatus, VatType } from "./types";
 import { Currency } from "./currency";
-import { DEFAULT_VAT_RATE } from "./types";
 
 // Re-export Currency for convenience if needed, or just use it internally
 export { Currency };
@@ -205,7 +204,7 @@ export function mapVatTypeToDb(vatType: "חייב מע״מ" | "ללא מע״מ" 
   } else if (vatType === "כולל מע״מ") {
     return { includesVat: "true" };
   } else {
-    return { includesVat: "false" };
+    return { vatRate: "18", includesVat: "false" };
   }
 }
 

@@ -1,4 +1,4 @@
-import { google, calendar_v3 } from "googleapis";
+import { google } from "googleapis";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -11,57 +11,22 @@ export interface CalendarEvent {
   end: Date;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Environment validation
-// ─────────────────────────────────────────────────────────────────────────────
-
-function validateEnvVars() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
-  const calendarId = process.env.GOOGLE_CALENDAR_ID;
-
-  if (!email) {
-    throw new Error(
-      "Missing GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable"
-    );
+export class GoogleCalendarAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GoogleCalendarAuthError";
   }
-  if (!privateKey) {
-    throw new Error(
-      "Missing GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY environment variable"
-    );
-  }
-  if (!calendarId) {
-    throw new Error("Missing GOOGLE_CALENDAR_ID environment variable");
-  }
-
-  return { email, privateKey, calendarId };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Google Calendar client
 // ─────────────────────────────────────────────────────────────────────────────
 
-let cachedCalendarClient: calendar_v3.Calendar | null = null;
+function getCalendarClient(accessToken: string) {
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
 
-function getCalendarClient() {
-  if (cachedCalendarClient) {
-    return cachedCalendarClient;
-  }
-
-  const { email, privateKey } = validateEnvVars();
-
-  // Handle the case where the key contains literal "\n" characters
-  // (common when stored in .env files)
-  const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
-
-  const auth = new google.auth.JWT({
-    email,
-    key: formattedPrivateKey,
-    scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
-  });
-
-  cachedCalendarClient = google.calendar({ version: "v3", auth });
-  return cachedCalendarClient;
+  return google.calendar({ version: "v3", auth });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,27 +55,31 @@ function getMonthBoundsISO(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetches all events from the configured Google Calendar for a specific month.
+ * Fetches all events from the user's primary Google Calendar for a specific month.
  *
  * @param year - The year (e.g., 2024)
  * @param month - The month (1-12)
+ * @param accessToken - The user's Google OAuth access token
  * @returns Array of calendar events with id, summary, start, and end dates
  */
 export async function listEventsForMonth(
   year: number,
-  month: number
+  month: number,
+  accessToken: string
 ): Promise<CalendarEvent[]> {
-  const { calendarId } = validateEnvVars();
-  const calendar = getCalendarClient();
+  const calendar = getCalendarClient(accessToken);
   const { timeMin, timeMax } = getMonthBoundsISO(year, month);
 
   try {
     const response = await calendar.events.list({
-      calendarId,
+      calendarId: "primary", // Use the user's primary calendar
       timeMin,
       timeMax,
       singleEvents: true,
       orderBy: "startTime",
+      // Trim payload size to only what we need for import
+      fields: "items(id,summary,start,end)",
+      maxResults: 500,
     });
 
     const events = response.data.items || [];
@@ -143,9 +112,14 @@ export async function listEventsForMonth(
       });
   } catch (error) {
     console.error("Failed to fetch Google Calendar events:", error);
+    const status =
+      (error as { code?: number; response?: { status?: number } })?.code ??
+      (error as { code?: number; response?: { status?: number } })?.response?.status;
+    if (status === 401 || status === 403) {
+      throw new GoogleCalendarAuthError("Google access token is expired or revoked");
+    }
     throw new Error(
       `Failed to fetch calendar events: ${error instanceof Error ? error.message : "Unknown error"}`
     );
   }
 }
-
